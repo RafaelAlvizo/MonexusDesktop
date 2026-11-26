@@ -36,19 +36,13 @@ function reordered(a, i, j) {
   if (j >= 0 && j < b.length) [b[i], b[j]] = [b[j], b[i]];
   return b;
 }
-export default function BoardConfig({
-  api,
-  board,
-  me,
-  members,
-  onClose,
-  onSaved,
-}) {
+export default function BoardConfig({ api, board, me, members, onClose, onSaved, onDeleted }) {
   const [cfg, set] = useState(() =>
       structuredClone(board || boardTemplate('', '', 'MX')),
     ),
     [people, assign] = useState({ ...board?.members }),
     [tab, tabSet] = useState('General'),
+    [confirming, confirmDelete] = useState(false),
     [focus, setFocus] = useState(''),
     job = useJob();
   const patch = (o) => set((s) => ({ ...s, ...o })),
@@ -80,6 +74,42 @@ export default function BoardConfig({
         });
       onSaved(key);
     });
+  const page = cfg.page || {},
+    timing = cfg.timing || { enabled: false, start: 'doing', finish: 'done' };
+  if (confirming)
+    return (
+      <Modal
+        title="Delete this board?"
+        subtitle={board.name}
+        onClose={() => !job.busy && confirmDelete(false)}
+      >
+        <div className="form-body">
+          This permanently removes this board and its tickets for everyone.
+          <ErrorText error={job.error} />
+        </div>
+        <footer>
+          <Btn disabled={job.busy} onClick={() => confirmDelete(false)}>
+            Keep board
+          </Btn>
+          <Btn
+            kind="danger"
+            disabled={job.busy}
+            onClick={() =>
+              job.run(async () => {
+                await api.command('board.delete', {
+                  board: board.id,
+                  rev: board.rev,
+                  confirm: board.name,
+                });
+                onDeleted();
+              })
+            }
+          >
+            Delete board
+          </Btn>
+        </footer>
+      </Modal>
+    );
   return (
     <Modal
       title={board ? 'Board settings' : 'Create board'}
@@ -88,7 +118,14 @@ export default function BoardConfig({
       onClose={onClose}
     >
       <Tabs
-        values={['General', 'Columns', 'Fields', 'Members', 'Permissions']}
+        values={[
+          'General',
+          'Appearance',
+          'Columns',
+          'Fields',
+          'Members',
+          'Permissions',
+        ]}
         value={tab}
         onChange={tabSet}
       />
@@ -134,6 +171,58 @@ export default function BoardConfig({
               </select>
             </Label>
             <div className="span">
+              <h3>Ticket timing</h3>
+              <Check
+                checked={timing.enabled}
+                onChange={(e) => {
+                  const enable = e.target.checked,
+                    fields = [...cfg.fields];
+                  if (enable && !fields.some((f) => f.key === 'actual'))
+                    fields.push(field('actual', 'Real hours', 'number'));
+                  patch({
+                    timing: { ...timing, enabled: enable },
+                    fields: fields.map((f) =>
+                      enable && f.key === 'actual'
+                        ? { ...f, enabled: true, required: false }
+                        : f,
+                    ),
+                  });
+                }}
+              >
+                Precise ticket estimate
+              </Check>
+              {timing.enabled && (
+                <>
+                  <p>
+                    Real hours record elapsed time from the start column to the
+                    finish column, including time in between. Reopened cycles
+                    add to the total.
+                  </p>
+                  <div className="form-grid">
+                    {[
+                      ['start', 'Start timing in'],
+                      ['finish', 'Finish timing in'],
+                    ].map(([key, label]) => (
+                      <Label key={key} name={label}>
+                        <select
+                          value={timing[key]}
+                          onChange={(e) =>
+                            patch({
+                              timing: { ...timing, [key]: e.target.value },
+                            })
+                          }
+                        >
+                          {cfg.columns.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </Label>
+                    ))}
+                  </div>
+                </>
+              )}
               <h3>Ticket features</h3>
               {Object.entries(cfg.features).map(([k, v]) => (
                 <Check
@@ -155,6 +244,47 @@ export default function BoardConfig({
                   }
                 </Check>
               ))}
+            </div>
+          </div>
+        )}
+        {tab === 'Appearance' && (
+          <div className="form-grid">
+            <Label name="Default board view">
+              <select
+                value={page.view || 'board'}
+                onChange={(e) =>
+                  patch({ page: { ...page, view: e.target.value } })
+                }
+              >
+                <option value="board">Board</option>
+                <option value="list">List</option>
+              </select>
+            </Label>
+            <div className="span">
+              <Check
+                checked={!!page.compact}
+                onChange={(e) =>
+                  patch({ page: { ...page, compact: e.target.checked } })
+                }
+              >
+                Compact ticket cards
+              </Check>
+              <Check
+                checked={!!page.tint}
+                onChange={(e) =>
+                  patch({ page: { ...page, tint: e.target.checked } })
+                }
+              >
+                Tint the header with the board color
+              </Check>
+              <Check
+                checked={page.description !== false}
+                onChange={(e) =>
+                  patch({ page: { ...page, description: e.target.checked } })
+                }
+              >
+                Show board description
+              </Check>
             </div>
           </div>
         )}
@@ -267,6 +397,18 @@ export default function BoardConfig({
                         patch({ fields: reordered(cfg.fields, i, i + 1) })
                       }
                     />
+                    {f.key !== 'title' && (
+                      <IconButton
+                        icon={X}
+                        label={'Remove ' + f.label + ' field'}
+                        onClick={() => {
+                          patch({
+                            fields: cfg.fields.filter((x) => x.key !== f.key),
+                          });
+                          setFocus('');
+                        }}
+                      />
+                    )}
                   </div>
                 </div>
                 {focus === f.key && (
@@ -448,6 +590,11 @@ export default function BoardConfig({
         <ErrorText error={job.error} />
       </div>
       <footer>
+        {board && (
+          <Btn kind="danger" onClick={() => confirmDelete(true)}>
+            Delete board
+          </Btn>
+        )}
         <Btn onClick={onClose}>Cancel</Btn>
         <Btn kind="primary" onClick={save} disabled={job.busy}>
           {board ? 'Save board' : 'Create board'}

@@ -1,9 +1,29 @@
 import React, { useState } from 'react';
-import { FolderClosed, Plus, ArrowUpRight, Search } from 'lucide-react';
-import { Btn, Empty } from '../ui.jsx';
+import {
+  FolderClosed,
+  Plus,
+  ArrowUpRight,
+  Search,
+  SlidersHorizontal,
+} from 'lucide-react';
+import { Btn, Empty, Check, Label } from '../ui.jsx';
 import { isAdmin } from '../../functions/core/model.mjs';
 export default function Directory({ boards, me, choose, create }) {
   const [search, set] = useState('');
+  const storageKey = 'monexus.boardDirectory.' + me.id;
+  const [options, showOptions] = useState(false);
+  const [appearance, setAppearance] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(storageKey)) || {};
+    } catch {
+      return {};
+    }
+  });
+  function change(patch) {
+    const next = { ...appearance, ...patch };
+    setAppearance(next);
+    localStorage.setItem(storageKey, JSON.stringify(next));
+  }
   const projects = new Map();
   for (const b of boards) {
     if (
@@ -29,15 +49,49 @@ export default function Directory({ boards, me, choose, create }) {
           </Btn>
         )}
       </div>
-      <label className="search">
-        <Search size={15} />
-        <input
-          aria-label="Find a project or board"
-          placeholder="Find project or board…"
-          value={search}
-          onChange={(e) => set(e.target.value)}
-        />
-      </label>
+      <div className="directory-tools">
+        <label className="search">
+          <Search size={15} />
+          <input
+            aria-label="Find a project or board"
+            placeholder="Find project or board…"
+            value={search}
+            onChange={(e) => set(e.target.value)}
+          />
+        </label>
+        <Btn
+          icon={SlidersHorizontal}
+          aria-expanded={options}
+          onClick={() => showOptions(!options)}
+        >
+          View options
+        </Btn>
+      </div>
+      {options && (
+        <div className="panel directory-options">
+          <Label name="Board layout">
+            <select
+              value={appearance.layout || 'list'}
+              onChange={(e) => change({ layout: e.target.value })}
+            >
+              <option value="list">List</option>
+              <option value="grid">Cards</option>
+            </select>
+          </Label>
+          <Check
+            checked={appearance.description !== false}
+            onChange={(e) => change({ description: e.target.checked })}
+          >
+            Show descriptions
+          </Check>
+          <Check
+            checked={appearance.counts !== false}
+            onChange={(e) => change({ counts: e.target.checked })}
+          >
+            Show ticket and member counts
+          </Check>
+        </div>
+      )}
       {[...projects]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([project, items]) => (
@@ -46,24 +100,34 @@ export default function Directory({ boards, me, choose, create }) {
               <FolderClosed size={18} />
               {project}
             </h2>
-            {items.map((b) => (
-              <button
-                key={b.id}
-                className="resource-row"
-                onClick={() => choose(b.id)}
-              >
-                <i className={'dot ' + b.color} />
-                <span className="grow">
-                  <strong>{b.name}</strong>
-                  <small>{b.description}</small>
-                </span>
-                <small>
-                  {Object.values(b.counts).reduce((a, b) => a + b, 0)} tickets ·{' '}
-                  {b.memberIds.length} members
-                </small>
-                <ArrowUpRight size={16} />
-              </button>
-            ))}
+            <div
+              className={appearance.layout === 'grid' ? 'directory-cards' : ''}
+            >
+              {items
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((b) => (
+                  <button
+                    key={b.id}
+                    className="resource-row"
+                    onClick={() => choose(b.id)}
+                  >
+                    <i className={'dot ' + b.color} />
+                    <span className="grow">
+                      <strong>{b.name}</strong>
+                      {appearance.description !== false && (
+                        <small>{b.description}</small>
+                      )}
+                    </span>
+                    {appearance.counts !== false && (
+                      <small>
+                        {Object.values(b.counts).reduce((a, b) => a + b, 0)}{' '}
+                        tickets · {b.memberIds.length} members
+                      </small>
+                    )}
+                    <ArrowUpRight size={16} />
+                  </button>
+                ))}
+            </div>
           </section>
         ))}
       {!projects.size && (

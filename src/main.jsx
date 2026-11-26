@@ -8,6 +8,9 @@ import {
   BookOpen,
   NotebookPen,
   CalendarCheck,
+  CalendarDays,
+  Phone,
+  Figma as FigmaIcon,
   FolderClosed,
   Link2,
   KeyRound,
@@ -18,7 +21,6 @@ import {
   PanelLeftClose,
   Menu,
   LogIn,
-  
   ChevronDown,
   LayoutGrid,
   ShieldCheck,
@@ -44,6 +46,8 @@ import Board from './views/Board.jsx';
 import Directory from './views/Directory.jsx';
 const Admin = lazy(() => import('./views/Admin.jsx')),
   Channels = lazy(() => import('./views/Channels.jsx')),
+  FigmaResource = lazy(() => import('./views/Figma.jsx')),
+  Meetings = lazy(() => import('./views/Meetings.jsx')),
   Eod = lazy(() => import('./views/Eod.jsx')),
   Notes = lazy(() => import('./views/Notes.jsx')),
   Resources = lazy(() => import('./views/Resources.jsx')),
@@ -60,6 +64,9 @@ const nav = [
   ['drive', 'Drive', FolderClosed],
   ['links', 'Apps & links', Link2],
   ['vault', 'Sensitive data', KeyRound],
+  ['figma', 'Figma', FigmaIcon],
+  ['meetings', 'Meetings', Phone],
+  ['calendar', 'Calendar', CalendarDays],
 ];
 function SignIn({ onClose, connect }) {
   const [mode, set] = useState('signIn'),
@@ -148,6 +155,7 @@ function SignIn({ onClose, connect }) {
   );
 }
 function App() {
+  const [meetingRequest, requestMeeting] = useState(null);
   const [eodDate,setEodDate]=useState(null);
   const [api, setApi] = useState(null),
     [space, setSpace] = useState({ members: [], boards: [] }),
@@ -178,6 +186,7 @@ function App() {
     setSpace({ members: [], boards: [] });
     selectBoard('');
     setView('boards');
+    requestMeeting(null);
     setApi(next);
     authDialog(false);
   };
@@ -333,15 +342,34 @@ function App() {
     onPrefs: setPrefs,
     tell,
   };
-  return (
-    !api ? <main className="welcome">
-      <section><span className="mark">M</span><h1>Monexus Workspace</h1>
-      <p>Sign in with your work email to open your team’s workspace.</p>
-      <div className="row"><Btn kind="primary" icon={LogIn} onClick={() => authDialog(true)}>Sign in</Btn>
-      {desktop && <Btn icon={Download} onClick={() => nativeAction('update')}>Update</Btn>}</div>
-      {notice && <p role="status">{notice?.title || notice}</p>}</section>
-      {showAuth && <SignIn onClose={() => authDialog(false)} connect={connect} />}
-    </main> : !me ? <main className="welcome"><p role="status">Opening your workspace…</p></main> : <div className="shell">
+  return !api ? (
+    <main className="welcome">
+      <section>
+        <span className="mark">M</span>
+        <h1>Monexus Workspace</h1>
+        <p>Sign in with your work email to open your team’s workspace.</p>
+        <div className="row">
+          <Btn kind="primary" icon={LogIn} onClick={() => authDialog(true)}>
+            Sign in
+          </Btn>
+          {desktop && (
+            <Btn icon={Download} onClick={() => nativeAction('update')}>
+              Update
+            </Btn>
+          )}
+        </div>
+        {notice && <p role="status">{notice?.title || notice}</p>}
+      </section>
+      {showAuth && (
+        <SignIn onClose={() => authDialog(false)} connect={connect} />
+      )}
+    </main>
+  ) : !me ? (
+    <main className="welcome">
+      <p role="status">Opening your workspace…</p>
+    </main>
+  ) : (
+    <div className="shell">
       <aside className={'sidebar ' + (rail ? 'expanded' : '')}>
         <div className="brand">
           <span className="mark">M</span>
@@ -349,21 +377,25 @@ function App() {
         </div>
         <div className="nav-group">
           <div className="nav-label">Workspace</div>
-          {nav.slice(0, 3).map(([k, n, I]) => k === 'channels' ? <div key={k} id="conversation-navigation"/> : (
-            <button
-              className={
-                'nav-item ' +
-                (view === k || (k === 'boards' && view === 'directory')
-                  ? 'selected'
-                  : '')
-              }
-              key={k}
-              onClick={() => go(k === 'boards' ? 'directory' : k)}
-            >
-              <I />
-              {n}
-            </button>
-          ))}
+          {nav.slice(0, 3).map(([k, n, I]) =>
+            k === 'channels' ? (
+              <div key={k} id="conversation-navigation" />
+            ) : (
+              <button
+                className={
+                  'nav-item ' +
+                  (view === k || (k === 'boards' && view === 'directory')
+                    ? 'selected'
+                    : '')
+                }
+                key={k}
+                onClick={() => go(k === 'boards' ? 'directory' : k)}
+              >
+                <I />
+                {n}
+              </button>
+            ),
+          )}
         </div>
         <div className="nav-group projects">
           <div className="nav-label">
@@ -450,8 +482,16 @@ function App() {
             <strong>{title}</strong>
           </div>
           <div className="top-actions">
-            {desktop && <Btn icon={Download} onClick={() => nativeAction('update')}>Update</Btn>}
-            <IconButton icon={Inbox} label="Notification inbox" onClick={() => go('inbox')} />
+            {desktop && (
+              <Btn icon={Download} onClick={() => nativeAction('update')}>
+                Update
+              </Btn>
+            )}
+            <IconButton
+              icon={Inbox}
+              label="Notification inbox"
+              onClick={() => go('inbox')}
+            />
           </div>
         </div>
         <Suspense fallback={<p className="page">Loading…</p>}>
@@ -486,6 +526,8 @@ function App() {
             <Admin {...shared} navigate={go} />
           ) : view === 'inbox' ? (
             <InboxPage {...shared} open={openNotice} />
+          ) : view === 'figma' ? (
+            <FigmaResource {...shared} />
           ) : view === 'notes' ? (
             <Notes {...shared} />
           ) : view === 'vault' ? (
@@ -494,9 +536,37 @@ function App() {
             <Resources key={view} {...shared} area={view} />
           ) : null}
         </Suspense>
-        <Suspense fallback={null}><Eod key={api.uid} {...shared} visible={view === 'eod'} requested={eodDate}/></Suspense>
-        <Suspense fallback={null}><Channels key={api.uid} {...shared} showing={view === 'channels'} selected={channelId}
-          onSelect={id => {setChannelId(id);go('channels');}}/></Suspense>
+        <Suspense fallback={null}>
+          <Meetings
+            key={api.uid}
+            {...shared}
+            prefs={prefs}
+            hub={view === 'meetings'}
+            visible={view === 'calendar' || view === 'meetings'}
+            request={meetingRequest}
+          />
+        </Suspense>
+        <Suspense fallback={null}>
+          <Eod
+            key={api.uid}
+            {...shared}
+            visible={view === 'eod'}
+            requested={eodDate}
+          />
+        </Suspense>
+        <Suspense fallback={null}>
+          <Channels
+            key={api.uid}
+            {...shared}
+            showing={view === 'channels'}
+            meeting={(ch, mode) => requestMeeting({ ch, mode })}
+            selected={channelId}
+            onSelect={(id) => {
+              setChannelId(id);
+              go('channels');
+            }}
+          />
+        </Suspense>
       </main>
       {showAuth && (
         <SignIn onClose={() => authDialog(false)} connect={connect} />
@@ -514,7 +584,14 @@ function App() {
                   : '#3b916f',
           }}
         >
-          {notice.kind === 'workspace_banner' ? <div className="notice-message"><strong>{notice.title}</strong><p>{notice.body}</p></div> : notice}
+          {notice.kind === 'workspace_banner' ? (
+            <div className="notice-message">
+              <strong>{notice.title}</strong>
+              <p>{notice.body}</p>
+            </div>
+          ) : (
+            notice
+          )}
           <button
             onClick={() => setNotice('')}
             aria-label="Dismiss notification"

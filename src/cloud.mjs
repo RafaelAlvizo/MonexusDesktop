@@ -169,7 +169,9 @@ async function getWorkspace(user) {
       let members = [],
         boards = [],
         boardSub = () => {},
-        role = null, peopleReady = false, boardsReady = false;
+        role = null,
+        peopleReady = false,
+        boardsReady = false;
       const notify = () => {
         if (peopleReady && boardsReady) cb({ members, boards });
       };
@@ -218,6 +220,104 @@ async function getWorkspace(user) {
         boardSub();
       };
     },
+    boardPresence(board, cb, fail) {
+      const base = f.collection(db, 'boards', board, 'viewers'),
+        ref = f.doc(base);
+      let live = true,
+        rows = [],
+        visible = false;
+      const publish = () => {
+        if (live)
+          cb([
+            ...new Set(
+              rows.filter((x) => x.at > Date.now() - 75000).map((x) => x.uid),
+            ),
+          ]);
+      };
+      const beat = () => {
+        if (!live) return;
+        const here = !document.hidden;
+        if (here) {
+          visible = true;
+          f.setDoc(ref, { uid, at: f.serverTimestamp() }).catch((e) => {
+            if (live) fail(e);
+          });
+        } else if (visible) {
+          visible = false;
+          f.deleteDoc(ref).catch(() => {});
+        }
+        publish();
+      };
+      const off = f.onSnapshot(
+        f.query(
+          base,
+          f.where('at', '>', f.Timestamp.fromMillis(Date.now() - 75000)),
+        ),
+        (snap) => {
+          rows = snap.docs.map((d) => {
+            const x = d.data({ serverTimestamps: 'estimate' });
+            return { uid: x.uid, at: x.at?.toMillis() || 0 };
+          });
+          publish();
+        },
+        (e) => {
+          if (live) fail(e);
+        },
+      );
+      const timer = setInterval(beat, 22000);
+      beat();
+      window.addEventListener('focus', beat);
+      document.addEventListener('visibilitychange', beat);
+      return () => {
+        live = false;
+        off();
+        clearInterval(timer);
+        window.removeEventListener('focus', beat);
+        document.removeEventListener('visibilitychange', beat);
+        f.deleteDoc(ref).catch(() => {});
+      };
+    },
+    watchMeetings(cb, fail) {
+      return f.onSnapshot(
+        f.query(
+          f.collection(db, 'meetings'),
+          f.where('invited', 'array-contains', uid),
+        ),
+        (snap) => cb(snap.docs.map((d) => d.data())),
+        fail,
+      );
+    },
+    watchRoom(id, cb, fail) {
+      return f.onSnapshot(
+        f.collection(db, 'meetings', id, 'peers'),
+        (snap) => cb(snap.docs.map((d) => d.data())),
+        fail,
+      );
+    },
+    watchSignals(id, session, cb, fail) {
+      return f.onSnapshot(
+        f.collection(
+          db,
+          'meetings',
+          id,
+          'peers',
+          uid,
+          'sessions',
+          session,
+          'rtcSignals',
+        ),
+        (snap) => {
+          for (const change of snap.docChanges())
+            if (change.type !== 'removed') cb(change.doc.data());
+        },
+        fail,
+      );
+    },
+    watchClock(cb) {
+      return r.onValue(r.ref(rt, '.info/serverTimeOffset'), (snap) =>
+        cb(snap.val() || 0),
+      );
+    },
     watchBoard(board, count, cb, fail) {
       return f.onSnapshot(
         f.query(
@@ -251,8 +351,12 @@ async function getWorkspace(user) {
         fail,
       );
     },
-    watchMessage(channel,key,cb,fail) {
-      return r.onValue(r.ref(rt,'messages/'+channel+'/'+key),s => cb(s.val()),fail);
+    watchMessage(channel, key, cb, fail) {
+      return r.onValue(
+        r.ref(rt, 'messages/' + channel + '/' + key),
+        (s) => cb(s.val()),
+        fail,
+      );
     },
     watchPresence(cb, fail) {
       return r.onValue(
@@ -260,7 +364,9 @@ async function getWorkspace(user) {
         (snap) => {
           const map = {};
           snap.forEach((m) => {
-            const v = Object.values(m.val()).map(s => s.state === 'Idle' ? 'Online' : s.state);
+            const v = Object.values(m.val()).map((s) =>
+              s.state === 'Idle' ? 'Online' : s.state,
+            );
             map[m.key] =
               ['Do Not Disturb', 'Online', 'Idle'].find((k) => v.includes(k)) ||
               'Offline';
@@ -273,8 +379,8 @@ async function getWorkspace(user) {
     watchAlerts(cb, fail) {
       const after = Date.now(),
         seen = new Set();
-      let live=true;
-      const off=f.onSnapshot(
+      let live = true;
+      const off = f.onSnapshot(
         f.query(
           f.collection(db, 'members', uid, 'signals'),
           f.where('at', '>=', after),
@@ -287,14 +393,22 @@ async function getWorkspace(user) {
               seen.add(change.doc.id);
               const e = change.doc.data();
               if (Date.now() - e.at < 120000) {
-                if(e.message) command('notification.detail',{id:e.id}).then(n => {if(n && live)cb(n);}).catch(fail);
+                if (e.message)
+                  command('notification.detail', { id: e.id })
+                    .then((n) => {
+                      if (n && live) cb(n);
+                    })
+                    .catch(fail);
                 else cb(e);
               }
             }
         },
         fail,
       );
-      return () => {live=false;off();};
+      return () => {
+        live = false;
+        off();
+      };
     },
     presence(mode, onState, onError) {
       const session = r.ref(rt, 'presence/' + uid + '/' + crypto.randomUUID()),

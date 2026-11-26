@@ -21,7 +21,7 @@ export default defineConfig(({ mode, command }) => {
                     content:
                       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src " +
                       connections +
-                      "; frame-src 'self' https://monexus-main-db.firebaseapp.com" +
+                      "; frame-src 'self' https://embed.figma.com https://www.figma.com https://monexus-main-db.firebaseapp.com" +
                       (emulator ? ' http://127.0.0.1:*' : '') +
                       "; object-src 'none'; base-uri 'self'",
                   },

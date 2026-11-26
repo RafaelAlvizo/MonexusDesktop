@@ -1571,3 +1571,302 @@ details > .form-grid {
 .notebook-list>.section-line{flex-wrap:wrap;row-gap:6px}
 .notebook-list .btn.compact{padding:6px 9px;white-space:nowrap}
 .notebook-location.new-project{font-weight:550;color:var(--accent)}
+
+/* Board workspace */
+.board-heading {
+  background: color-mix(
+    in srgb,
+    var(--header-tint, transparent) 14%,
+    transparent
+  );
+}
+.board-page[style*='--header-tint'] .board-heading {
+  padding: 16px;
+  border-radius: 12px;
+}
+.compact-board .ticket-card {
+  padding: 8px 10px;
+  gap: 3px;
+}
+.compact-board .lane-cards {
+  gap: 5px;
+}
+.compact-board .ticket-card h3 {
+  margin: 3px 0;
+}
+.board-meta {
+  flex-wrap: wrap;
+}
+.board-here,
+.board-here > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.board-here {
+  margin-right: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn.danger {
+  background: #a12c38;
+  color: white;
+  border-color: #a12c38;
+}
+.figma-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  gap: 14px;
+}
+.figma-tools,
+.live-meetings > div,
+.meeting-invite,
+.call-overlay > header > span {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.figma-view iframe {
+  width: 100%;
+  height: calc(100dvh - 215px);
+  min-height: 340px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+.calendar-columns {
+  display: grid;
+  grid-template-columns: minmax(225px, 280px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.month-panel,
+.agenda-panel,
+.live-meetings {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: 12px;
+  padding: 18px;
+}
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  text-align: center;
+  margin: 16px 0;
+}
+.month-grid small {
+  color: var(--dim);
+  padding: 5px;
+}
+.month-grid button {
+  position: relative;
+  border-radius: 8px;
+  padding: 7px 2px;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+}
+.month-grid button:hover {
+  background: var(--bg);
+}
+.month-grid [aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--paper);
+}
+.has-meeting:after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 48%;
+  width: 4px;
+  height: 4px;
+  background: currentColor;
+  border-radius: 50%;
+}
+.agenda-item {
+  display: flex;
+  gap: 12px;
+  padding: 16px 0;
+  align-items: center;
+  border-top: 1px solid var(--line);
+}
+.agenda-item > div:last-child {
+  margin-left: auto;
+}
+.agenda-item h3 {
+  margin: 4px 0;
+}
+.agenda-item small,
+.agenda-item > svg {
+  color: var(--dim);
+}
+.live-meetings {
+  border-left: 4px solid var(--accent);
+  margin: 0 0 16px;
+}
+.live-meetings > div {
+  justify-content: space-between;
+  padding: 6px 0;
+}
+.meeting-people {
+  max-height: 195px;
+  overflow: auto;
+  display: grid;
+  gap: 4px;
+}
+.meeting-invite {
+  position: fixed;
+  bottom: 25px;
+  right: 25px;
+  z-index: 1100;
+  align-items: flex-start;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--accent);
+  border-radius: 12px;
+  box-shadow: 0 12px 45px #0004;
+}
+.meeting-invite h3 {
+  margin: 4px 0 14px;
+}
+.call-overlay {
+  position: fixed;
+  inset: 0;
+  background: #142320;
+  color: #f3f8f5;
+  display: flex;
+  flex-direction: column;
+  z-index: 1500;
+  padding: clamp(16px, 3vw, 42px);
+  gap: 16px;
+}
+.call-overlay > header,
+.call-overlay > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.call-overlay > header h2 {
+  font-size: clamp(24px, 3vw, 38px);
+  margin: 4px 0;
+}
+.call-overlay small {
+  color: #c0d1c8;
+}
+.call-overlay > main {
+  padding: 0;
+  min-height: 0;
+  overflow: auto;
+  background: none;
+  display: block;
+  flex: 1;
+}
+.call-overlay > footer {
+  justify-content: center;
+  padding: 14px;
+  border-top: 1px solid #39504a;
+}
+.call-overlay .btn {
+  min-height: 40px;
+}
+.call-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.call-tile,
+.lobby,
+.screen-stage,
+.meeting-admission {
+  background: #263933;
+  border: 1px solid #40574d;
+  border-radius: 14px;
+  padding: 18px;
+}
+.call-tile,
+.lobby {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  min-height: 170px;
+}
+.call-tile > .avatar {
+  width: 60px;
+  height: 60px;
+  font-size: 22px;
+}
+.call-tile small {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.meeting-admission,
+.screen-stage {
+  margin: 12px 0;
+}
+.screen-stage video {
+  display: block;
+  max-height: 48vh;
+  width: 100%;
+  object-fit: contain;
+}
+.meeting-admission label {
+  color: inherit;
+}
+.meeting-admission .row {
+  padding: 6px 0;
+}
+.meeting-invite .row {
+  flex-wrap: wrap;
+}
+@media (max-width: 800px) {
+  .calendar-columns {
+    grid-template-columns: 1fr;
+  }
+  .month-panel {
+    max-width: 350px;
+  }
+  .board-here {
+    width: 100%;
+  }
+  .call-overlay > footer {
+    gap: 6px;
+  }
+}
+
+.recorded-time {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.recorded-time output {
+  font-variant-numeric: tabular-nums;
+}
+.recorded-time small {
+  color: var(--dim);
+}
+
+.directory-tools,.directory-options{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.directory-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.directory-cards .resource-row{border:1px solid var(--line);border-radius:10px;align-items:flex-start;flex-wrap:wrap;padding:15px}
+.directory-cards .resource-row>.grow{min-width:70%}
+
+.call-overlay .btn {
+  color: #f6faf8;
+  background: #30483e;
+  border-color: #61796e;
+}
+.call-overlay .btn:hover { background: #405b50; }
+.call-overlay .btn.danger { background: #a52f3d; border-color: #c85563; }
+.call-overlay main:not(:has(.screen-stage)) .call-tiles {min-height: clamp(210px,46vh,420px);}
+.call-overlay .call-tile > .avatar {width: 76px;height: 76px;font-size: 26px;}
+.call-overlay .call-tile strong {font-size: 16px;}

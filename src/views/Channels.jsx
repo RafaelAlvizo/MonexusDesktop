@@ -1,5 +1,15 @@
 import {createPortal} from 'react-dom';
-import {ChevronDown, ChevronRight, MessagesSquare, ArrowUp, ArrowDown, Trash2} from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  MessagesSquare,
+  ArrowUp,
+  ArrowDown,
+  Trash2,
+  Pencil,
+  Phone,
+  CalendarPlus,
+} from 'lucide-react';
 import {saveFile} from '../ui.jsx';
 import React, { useEffect, useState, useRef } from 'react';
 import {
@@ -201,7 +211,7 @@ function MessageMedia({api,channel,message}) {
   return <>{(files.data?.items || []).map(file => <Preview key={file.id} {...{api,file}}/>)}
     {files.loading && <small>Loading attachment…</small>}<ErrorText error={files.error}/></>;
 }
-function Feed({ api, ch, me, members, tell, configure, presence }) {
+function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
   const [recent, setRecent] = useState([]),
     [older, setOlder] = useState([]),
     [end, setEnd] = useState(false),
@@ -211,32 +221,69 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
     [choice, setChoice] = useState(0),
     [reply, to] = useState(null),
     [file, attach] = useState(null),
-    [deleting,confirmDelete] = useState(null),
+    [editing, setEditing] = useState(null),
+    [clearing, setClearing] = useState(false),
+    [deleting, confirmDelete] = useState(null),
     [media, showMedia] = useState(''),
     [pinned, onlyPins] = useState(false),
     [progress, setProgress] = useState(0),
     job = useJob();
-  const stream = useRef(null), follow = useRef(true), composer = useRef(null);
-  useEffect(() => {composer.current?.focus();}, [ch.id]);
-  const query = caret < 0 ? null : body.slice(0, caret).match(/(?:^|\s)@([^@\s]*)$/u);
-  const candidates = query ? members.filter(m => channelAllows(ch, m) &&
-    m.name.toLowerCase().includes(query[1].toLowerCase())).slice(0, 8) : [];
+  const stream = useRef(null),
+    follow = useRef(true),
+    composer = useRef(null);
+  useEffect(() => {
+    composer.current?.focus();
+  }, [ch.id]);
+  const query =
+    caret < 0 ? null : body.slice(0, caret).match(/(?:^|\s)@([^@\s]*)$/u);
+  const candidates = query
+    ? members
+        .filter(
+          (m) =>
+            channelAllows(ch, m) &&
+            m.name.toLowerCase().includes(query[1].toLowerCase()),
+        )
+        .slice(0, 8)
+    : [];
   function editBody(next) {
-    let start = 0, end = body.length, tail = next.length;
+    let start = 0,
+      end = body.length,
+      tail = next.length;
     while (start < end && start < tail && body[start] === next[start]) start++;
-    while (end > start && tail > start && body[end-1] === next[tail-1]) { end--; tail--; }
-    setTags(tags.flatMap(tag => tag.end <= start ? [tag] : tag.start >= end
-      ? [{...tag, start:tag.start+tail-end, end:tag.end+tail-end}] : []));
+    while (end > start && tail > start && body[end - 1] === next[tail - 1]) {
+      end--;
+      tail--;
+    }
+    setTags(
+      tags.flatMap((tag) =>
+        tag.end <= start
+          ? [tag]
+          : tag.start >= end
+            ? [
+                {
+                  ...tag,
+                  start: tag.start + tail - end,
+                  end: tag.end + tail - end,
+                },
+              ]
+            : [],
+      ),
+    );
     text(next);
     setChoice(0);
   }
   function tagPerson(person) {
     const start = caret - query[1].length - 1;
     const label = '@' + person.name;
-    const next = body.slice(0,start) + label + ' ' + body.slice(caret);
+    const next = body.slice(0, start) + label + ' ' + body.slice(caret);
     const delta = next.length - body.length;
-    setTags([...tags.filter(t => t.end <= start), {id:person.id, start, end:start+label.length},
-      ...tags.filter(t => t.start >= caret).map(t => ({...t,start:t.start+delta,end:t.end+delta}))]);
+    setTags([
+      ...tags.filter((t) => t.end <= start),
+      { id: person.id, start, end: start + label.length },
+      ...tags
+        .filter((t) => t.start >= caret)
+        .map((t) => ({ ...t, start: t.start + delta, end: t.end + delta })),
+    ]);
     text(next);
     setCaret(-1);
     requestAnimationFrame(() => {
@@ -247,7 +294,8 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
   }
   const latest = recent[recent.length - 1]?.id;
   useEffect(() => {
-    if (follow.current && stream.current) stream.current.scrollTop = stream.current.scrollHeight;
+    if (follow.current && stream.current)
+      stream.current.scrollTop = stream.current.scrollHeight;
   }, [latest]);
   const [pinLimit, setPinLimit] = useState(50);
   useEffect(() => {
@@ -263,14 +311,28 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
       { pinned, limit: pinLimit },
     );
   }, [api, ch.id, pinned, pinLimit]);
-  const olderIds=older.map(m => m.id).join(',');
+  const olderIds = older.map((m) => m.id).join(',');
   useEffect(() => {
-    if(!olderIds)return;
-    const offs=olderIds.split(',').map(id => api.watchMessage(ch.id,id,message => {
-      setOlder(xs => message ? xs.map(x => x.id === id ? message : x) : xs.filter(x => x.id !== id));
-    },e => {setOlder([]);tell(e);}));
-    return () => offs.forEach(off => off());
-  },[api,ch.id,olderIds]);
+    if (!olderIds) return;
+    const offs = olderIds.split(',').map((id) =>
+      api.watchMessage(
+        ch.id,
+        id,
+        (message) => {
+          setOlder((xs) =>
+            message
+              ? xs.map((x) => (x.id === id ? message : x))
+              : xs.filter((x) => x.id !== id),
+          );
+        },
+        (e) => {
+          setOlder([]);
+          tell(e);
+        },
+      ),
+    );
+    return () => offs.forEach((off) => off());
+  }, [api, ch.id, olderIds]);
   const all = [
       ...new Map(
         [...(pinned ? [] : older), ...recent].map((m) => [m.id, m]),
@@ -287,17 +349,16 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
         id: key,
         body,
         reply: reply?.id || '',
-        mentions: [...new Set(tags.map(t => t.id))],
+        mentions: [...new Set(tags.map((t) => t.id))],
         hasMedia: !!file,
       });
       follow.current = true;
-      text(current => current === body ? '' : current);
+      text((current) => (current === body ? '' : current));
       composer.current?.focus();
       setTags([]);
       setCaret(-1);
       to(null);
       if (file) {
-
         await api.upload(
           { kind: 'channel', container: ch.id, item: key },
           file,
@@ -310,20 +371,46 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
     <div className="feed">
       <div className="section-line">
         <h2>
-          {ch.kind === 'direct' ? <UsersRound size={20} /> : ch.kind === 'announcement' ? (
+          {ch.kind === 'direct' ? (
+            <UsersRound size={20} />
+          ) : ch.kind === 'announcement' ? (
             <Megaphone size={20} />
           ) : (
             <Hash size={20} />
           )}{' '}
           {ch.name}
         </h2>
-        <div className="row">{configure && <IconButton icon={Settings2} label="Channel settings" onClick={configure} />}<Btn
-          kind={pinned ? 'tinted' : ''}
-          icon={Pin}
-          onClick={() => onlyPins(!pinned)}
-        >
-          Pinned
-        </Btn></div>
+        <div className="row wrap">
+          <Btn icon={Phone} onClick={() => meeting(ch, 'now')}>
+            Call
+          </Btn>
+          <IconButton
+            icon={CalendarPlus}
+            label="Schedule a meeting"
+            onClick={() => meeting(ch, 'schedule')}
+          />
+          {isAdmin(me) && (
+            <IconButton
+              icon={Trash2}
+              label="Clear chat"
+              onClick={() => setClearing(true)}
+            />
+          )}
+          {configure && (
+            <IconButton
+              icon={Settings2}
+              label="Channel settings"
+              onClick={configure}
+            />
+          )}
+          <Btn
+            kind={pinned ? 'tinted' : ''}
+            icon={Pin}
+            onClick={() => onlyPins(!pinned)}
+          >
+            Pinned
+          </Btn>
+        </div>
       </div>
       {pinned && recent.length === pinLimit && (
         <Btn onClick={() => setPinLimit((n) => n + 50)}>
@@ -348,99 +435,176 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
           Load earlier posts
         </Btn>
       )}
-      <div className="feed-posts" ref={stream} onScroll={e => {
-        const el = e.currentTarget;
-        follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      }}>
+      <div
+        className="feed-posts"
+        ref={stream}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          follow.current =
+            el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        }}
+      >
         {all
           .filter((m) => !pinned || m.pinned)
           .map((m, i, shown) => {
             const person = members.find((x) => x.id === m.by);
             return (
-              <React.Fragment key={m.id}>{(!i || new Date(shown[i-1].at).toDateString() !== new Date(m.at).toDateString()) &&
-                <div className="chat-day">{new Date(m.at).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',year:'numeric'})}</div>}
-              <article className={'post chat-message ' + (m.by === me?.id ? 'own' : '')} key={m.id}>
-                <div className="row">
-                  <PersonIcon person={person} state={presence[m.by]} />
-                  <strong>{person?.name || 'Member'}</strong>
-                  <small>{new Date(m.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})}</small>
-                  {m.pinned && <Pin size={13} />}
-                </div>
-                {m.deleted ? <p className="deleted-post">Message deleted</p> : <>
-                {m.reply && (
-                  <button
-                    className="quoted"
-                    onClick={() =>
-                      command('message', { id: m.reply }).then(
-                        (x) => x && tell(x.deleted ? 'Message deleted' : x.body || 'Attachment'),
-                      )
-                    }
-                  >
-                    ↳{' '}
-                    {all.find((x) => x.id === m.reply)?.body ||
-                      'View replied-to message'}
-                  </button>
+              <React.Fragment key={m.id}>
+                {(!i ||
+                  new Date(shown[i - 1].at).toDateString() !==
+                    new Date(m.at).toDateString()) && (
+                  <div className="chat-day">
+                    {new Date(m.at).toLocaleDateString(undefined, {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                  </div>
                 )}
-                {m.body && <MessageBody message={m} members={members} />}
-                {m.hasMedia && <MessageMedia api={api} channel={ch.id} message={m}/>}
-                {(m.mentions || []).filter(k => !m.body?.includes('@' + members.find(p => p.id === k)?.name)).map((k) => (
-                  <span className="chip type-design" key={k}>
-                    @{members.find((p) => p.id === k)?.name}
-                  </span>
-                ))}
-                {(m.links || []).map((u) => (
-                  <button
-                    className="text-btn"
-                    key={u}
-                    onClick={() => openLink(u)}
-                  >
-                    {u}
-                  </button>
-                ))}
-                <div className="post-actions">
-                  {['👍', '❤️', '🎉'].map((r) => (
-                    <button
-                      key={r}
-                      aria-label={'React ' + r}
-                      className={Object.keys(m.reactions?.[r] || {}).length ? 'has-reactions' : ''}
-                      disabled={!can('react')}
-                      onClick={() => command('react', { id: m.id, emoji: r })}
-                    >
-                      {r} {Object.keys(m.reactions?.[r] || {}).length || ''}
-                    </button>
-                  ))}
-                  {can('post') && (
-                    <IconButton
-                      icon={Reply}
-                      label="Reply"
-                      onClick={() => to(m)}
-                    />
+                <article
+                  className={
+                    'post chat-message ' + (m.by === me?.id ? 'own' : '')
+                  }
+                  key={m.id}
+                >
+                  <div className="row">
+                    <PersonIcon person={person} state={presence[m.by]} />
+                    <strong>{person?.name || 'Member'}</strong>
+                    <small>
+                      {new Date(m.at).toLocaleTimeString([], {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </small>
+                    {m.editedAt && !m.deleted && <small>Edited</small>}
+                    {m.pinned && <Pin size={13} />}
+                  </div>
+                  {m.deleted ? (
+                    <p className="deleted-post">Message deleted</p>
+                  ) : (
+                    <>
+                      {m.reply && (
+                        <button
+                          className="quoted"
+                          onClick={() =>
+                            command('message', { id: m.reply }).then(
+                              (x) =>
+                                x &&
+                                tell(
+                                  x.deleted
+                                    ? 'Message deleted'
+                                    : x.body || 'Attachment',
+                                ),
+                            )
+                          }
+                        >
+                          ↳{' '}
+                          {all.find((x) => x.id === m.reply)?.body ||
+                            'View replied-to message'}
+                        </button>
+                      )}
+                      {m.body && <MessageBody message={m} members={members} />}
+                      {m.hasMedia && (
+                        <MessageMedia api={api} channel={ch.id} message={m} />
+                      )}
+                      {(m.mentions || [])
+                        .filter(
+                          (k) =>
+                            !m.body?.includes(
+                              '@' + members.find((p) => p.id === k)?.name,
+                            ),
+                        )
+                        .map((k) => (
+                          <span className="chip type-design" key={k}>
+                            @{members.find((p) => p.id === k)?.name}
+                          </span>
+                        ))}
+                      {(m.links || []).map((u) => (
+                        <button
+                          className="text-btn"
+                          key={u}
+                          onClick={() => openLink(u)}
+                        >
+                          {u}
+                        </button>
+                      ))}
+                      <div className="post-actions">
+                        {['👍', '❤️', '🎉'].map((r) => (
+                          <button
+                            key={r}
+                            aria-label={'React ' + r}
+                            className={
+                              Object.keys(m.reactions?.[r] || {}).length
+                                ? 'has-reactions'
+                                : ''
+                            }
+                            disabled={!can('react')}
+                            onClick={() =>
+                              command('react', { id: m.id, emoji: r })
+                            }
+                          >
+                            {r}{' '}
+                            {Object.keys(m.reactions?.[r] || {}).length || ''}
+                          </button>
+                        ))}
+                        {can('post') && (
+                          <IconButton
+                            icon={Reply}
+                            label="Reply"
+                            onClick={() => to(m)}
+                          />
+                        )}
+                        <IconButton
+                          icon={Paperclip}
+                          label="Message attachments"
+                          onClick={() => showMedia(media === m.id ? '' : m.id)}
+                        />
+                        {(m.by === me.id || isAdmin(me)) && (
+                          <IconButton
+                            icon={Trash2}
+                            label="Delete message for everyone"
+                            onClick={() => confirmDelete(m.id)}
+                          />
+                        )}
+                        {m.by === me.id && (
+                          <IconButton
+                            icon={Pencil}
+                            label="Edit message"
+                            onClick={() =>
+                              setEditing({
+                                id: m.id,
+                                body: m.body || '',
+                                rev: m.editRev || 0,
+                              })
+                            }
+                          />
+                        )}
+                        {can('pin') && (
+                          <IconButton
+                            icon={Pin}
+                            label={m.pinned ? 'Unpin' : 'Pin'}
+                            onClick={() =>
+                              command('pin', { id: m.id, value: !m.pinned })
+                            }
+                          />
+                        )}
+                      </div>
+                      {media === m.id && (
+                        <Attachments
+                          api={api}
+                          scope={{
+                            kind: 'channel',
+                            container: ch.id,
+                            item: m.id,
+                          }}
+                          canAdd={m.by === me?.id && can('post')}
+                        />
+                      )}
+                    </>
                   )}
-                  <IconButton
-                    icon={Paperclip}
-                    label="Message attachments"
-                    onClick={() => showMedia(media === m.id ? '' : m.id)}
-                  />
-                  {(m.by === me.id || isAdmin(me)) && <IconButton icon={Trash2} label="Delete message for everyone" onClick={() => confirmDelete(m.id)}/>}
-                  {can('pin') && (
-                    <IconButton
-                      icon={Pin}
-                      label={m.pinned ? 'Unpin' : 'Pin'}
-                      onClick={() =>
-                        command('pin', { id: m.id, value: !m.pinned })
-                      }
-                    />
-                  )}
-                </div>
-                {media === m.id && (
-                  <Attachments
-                    api={api}
-                    scope={{ kind: 'channel', container: ch.id, item: m.id }}
-                    canAdd={m.by === me?.id && can('post')}
-                  />
-                )}
-                </>}
-              </article></React.Fragment>
+                </article>
+              </React.Fragment>
             );
           })}
         {!all.some((m) => !pinned || m.pinned) && (
@@ -454,35 +618,85 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
               Replying to {reply.body.slice(0, 65)} ×
             </button>
           )}
-          {candidates.length > 0 && <div className="mention-results" role="listbox" aria-label="Mention teammate">
-            {candidates.map((m,i) => <button type="button" role="option" aria-selected={i === choice % candidates.length}
-              key={m.id} onMouseDown={e => e.preventDefault()} onClick={() => tagPerson(m)}>
-              <PersonIcon person={m} state={presence[m.id]} />{m.name}<small>{m.email}</small></button>)}
-          </div>}
+          {candidates.length > 0 && (
+            <div
+              className="mention-results"
+              role="listbox"
+              aria-label="Mention teammate"
+            >
+              {candidates.map((m, i) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={i === choice % candidates.length}
+                  key={m.id}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => tagPerson(m)}
+                >
+                  <PersonIcon person={m} state={presence[m.id]} />
+                  {m.name}
+                  <small>{m.email}</small>
+                </button>
+              ))}
+            </div>
+          )}
           <textarea
             rows={2}
             aria-label="Message"
             ref={composer}
-            placeholder={'Message ' + (ch.kind === 'direct' ? '' : '#') + ch.name + ' · @ to mention'}
-            onKeyDown={e => {
+            placeholder={
+              'Message ' +
+              (ch.kind === 'direct' ? '' : '#') +
+              ch.name +
+              ' · @ to mention'
+            }
+            onKeyDown={(e) => {
               if (e.nativeEvent.isComposing) return;
               if (candidates.length && !e.shiftKey) {
                 const index = choice % candidates.length;
-                if (['ArrowDown','ArrowUp'].includes(e.key)) {
-                  e.preventDefault(); setChoice((index + candidates.length + (e.key === 'ArrowDown' ? 1 : -1)) % candidates.length); return;
+                if (['ArrowDown', 'ArrowUp'].includes(e.key)) {
+                  e.preventDefault();
+                  setChoice(
+                    (index +
+                      candidates.length +
+                      (e.key === 'ArrowDown' ? 1 : -1)) %
+                      candidates.length,
+                  );
+                  return;
                 }
-                if (e.key === 'Escape') { e.preventDefault(); setCaret(-1); return; }
-                if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); tagPerson(candidates[index]); return; }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setCaret(-1);
+                  return;
+                }
+                if (e.key === 'Enter' || e.key === 'Tab') {
+                  e.preventDefault();
+                  tagPerson(candidates[index]);
+                  return;
+                }
               }
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              if (
+                e.key === 'Enter' &&
+                !e.shiftKey &&
+                !e.nativeEvent.isComposing
+              ) {
                 e.preventDefault();
                 if (!job.busy && (body.trim() || file)) post();
               }
             }}
             value={body}
             readOnly={job.busy}
-            onSelect={e => {if(e.currentTarget.selectionStart === e.currentTarget.selectionEnd) setCaret(e.currentTarget.selectionStart); else setCaret(-1);}}
-            onChange={e => { editBody(e.target.value); setCaret(e.target.selectionStart); }}
+            onSelect={(e) => {
+              if (
+                e.currentTarget.selectionStart === e.currentTarget.selectionEnd
+              )
+                setCaret(e.currentTarget.selectionStart);
+              else setCaret(-1);
+            }}
+            onChange={(e) => {
+              editBody(e.target.value);
+              setCaret(e.target.selectionStart);
+            }}
           />
           <div className="row wrap composer-tools">
             <label className="btn compact">
@@ -494,26 +708,126 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
                 onChange={(e) => attach(e.target.files[0])}
               />
             </label>
-          <Btn kind="primary" icon={Send} title="Send (Enter). Shift+Enter for a new line." disabled={job.busy || !(body.trim() || file)} onClick={post}>
-            {job.busy && progress
-              ? 'Uploading ' + progress + '%'
-              : 'Send'}
-          </Btn>
+            <Btn
+              kind="primary"
+              icon={Send}
+              title="Send (Enter). Shift+Enter for a new line."
+              disabled={job.busy || !(body.trim() || file)}
+              onClick={post}
+            >
+              {job.busy && progress ? 'Uploading ' + progress + '%' : 'Send'}
+            </Btn>
           </div>
-
-
         </div>
       )}
-      {deleting && <Modal title="Delete this message for everyone?" onClose={() => confirmDelete(null)}>
-        <footer><Btn onClick={() => confirmDelete(null)}>Cancel</Btn><Btn disabled={job.busy} onClick={() => job.run(async () => {
-          await api.command('channel.delete',{channel:ch.id,id:deleting});
-          setOlder(xs => xs.map(x => x.id === deleting ? {id:x.id,at:x.at,by:x.by,deleted:true} : x));confirmDelete(null);
-        })}>Delete message</Btn></footer><ErrorText error={job.error}/></Modal>}
+      {editing && (
+        <Modal title="Edit message" onClose={() => setEditing(null)}>
+          <div className="form-body">
+            <Label name="Message text">
+              <textarea
+                autoFocus
+                rows={4}
+                maxLength={8000}
+                value={editing.body}
+                onChange={(e) =>
+                  setEditing({ ...editing, body: e.target.value })
+                }
+              />
+            </Label>
+            <ErrorText error={job.error} />
+          </div>
+          <footer>
+            <Btn onClick={() => setEditing(null)}>Cancel</Btn>
+            <Btn
+              kind="primary"
+              disabled={job.busy}
+              onClick={() =>
+                job.run(async () => {
+                  await api.command('channel.edit', {
+                    channel: ch.id,
+                    ...editing,
+                  });
+                  setEditing(null);
+                })
+              }
+            >
+              Save changes
+            </Btn>
+          </footer>
+        </Modal>
+      )}
+      {clearing && (
+        <Modal
+          title="Clear this chat for everyone?"
+          subtitle={ch.name}
+          onClose={() => setClearing(false)}
+        >
+          <div className="form-body">
+            All messages, pins and chat attachments will disappear from this
+            conversation. This cannot be undone.
+            <ErrorText error={job.error} />
+          </div>
+          <footer>
+            <Btn onClick={() => setClearing(false)}>Keep messages</Btn>
+            <Btn
+              kind="danger"
+              disabled={job.busy}
+              onClick={() =>
+                job.run(async () => {
+                  await api.command('channel.clear', {
+                    channel: ch.id,
+                    confirm: ch.id,
+                  });
+                  setOlder([]);
+                  setEnd(false);
+                  to(null);
+                  setClearing(false);
+                })
+              }
+            >
+              Clear chat
+            </Btn>
+          </footer>
+        </Modal>
+      )}
+      {deleting && (
+        <Modal
+          title="Delete this message for everyone?"
+          onClose={() => confirmDelete(null)}
+        >
+          <footer>
+            <Btn onClick={() => confirmDelete(null)}>Cancel</Btn>
+            <Btn
+              disabled={job.busy}
+              onClick={() =>
+                job.run(async () => {
+                  await api.command('channel.delete', {
+                    channel: ch.id,
+                    id: deleting,
+                  });
+                  setOlder((xs) =>
+                    xs.map((x) =>
+                      x.id === deleting
+                        ? { id: x.id, at: x.at, by: x.by, deleted: true }
+                        : x,
+                    ),
+                  );
+                  confirmDelete(null);
+                })
+              }
+            >
+              Delete message
+            </Btn>
+          </footer>
+          <ErrorText error={job.error} />
+        </Modal>
+      )}
       <ErrorText error={job.error} />
     </div>
   );
 }
 export default function Channels({
+  meeting,
   api,
   me,
   members,
@@ -522,30 +836,53 @@ export default function Channels({
   onSelect,
   tell,
 }) {
-  const [list,setList]=useState([]), [listError,listFailed]=useState(''),
-    [generation,refresh]=useState(0),
+  const [list, setList] = useState([]),
+    [listError, listFailed] = useState(''),
+    [generation, refresh] = useState(0),
     [edit, setEdit] = useState(null),
     [presence, setPresence] = useState({}),
     [direct, setDirect] = useState(null),
     [query, search] = useState(''),
     job = useJob();
   useEffect(() => {
-    let live=true, sequence=0;
-    const reload=async () => {
-      const request=++sequence;
-      try {const result=await api.command('channel.list');if(live && sequence === request){setList(result);listFailed('');}}
-      catch(e){if(live && sequence === request)listFailed(e.message);}
+    let live = true,
+      sequence = 0;
+    const reload = async () => {
+      const request = ++sequence;
+      try {
+        const result = await api.command('channel.list');
+        if (live && sequence === request) {
+          setList(result);
+          listFailed('');
+        }
+      } catch (e) {
+        if (live && sequence === request) listFailed(e.message);
+      }
     };
     reload();
-    window.addEventListener('focus',reload);
-    return () => {live=false;window.removeEventListener('focus',reload);};
-  },[api,generation,selected]);
-  const raw = list.find(c => c.id === selected) || (direct?.id === selected ? direct : null) || list.find(c => c.kind !== 'direct');
-  const peerId = raw?.kind === 'direct' ? Object.keys(raw.users).find(uid => uid !== me?.id) : '';
-  const ch = peerId ? { ...raw, name: members.find(m => m.id === peerId)?.name || 'Teammate' } : raw;
-  const matches = name => name.toLowerCase().includes(query.trim().toLowerCase());
-  const people = members.filter(m => m.active && m.id !== me?.id && matches(m.name));
-  const visible = list.filter(c => c.kind !== 'direct' && matches(c.name));
+    window.addEventListener('focus', reload);
+    return () => {
+      live = false;
+      window.removeEventListener('focus', reload);
+    };
+  }, [api, generation, selected]);
+  const raw =
+    list.find((c) => c.id === selected) ||
+    (direct?.id === selected ? direct : null) ||
+    list.find((c) => c.kind !== 'direct');
+  const peerId =
+    raw?.kind === 'direct'
+      ? Object.keys(raw.users).find((uid) => uid !== me?.id)
+      : '';
+  const ch = peerId
+    ? { ...raw, name: members.find((m) => m.id === peerId)?.name || 'Teammate' }
+    : raw;
+  const matches = (name) =>
+    name.toLowerCase().includes(query.trim().toLowerCase());
+  const people = members.filter(
+    (m) => m.active && m.id !== me?.id && matches(m.name),
+  );
+  const visible = list.filter((c) => c.kind !== 'direct' && matches(c.name));
   useEffect(() => api.watchPresence(setPresence, tell), [api]);
   function openDirect(target) {
     job.run(async () => {
@@ -554,57 +891,172 @@ export default function Channels({
       onSelect(c.id);
     });
   }
-  const [expanded,expand] = useState(false), [ordering,reorder] = useState(false);
+  const [expanded, expand] = useState(false),
+    [ordering, reorder] = useState(false);
   const storageKey = 'monexus.conversations.' + me.id;
-  const [order,setOrder] = useState(() => {try{return JSON.parse(localStorage.getItem(storageKey)) || {};}catch{return {};}});
-  const [orderReady,ready]=useState(false), writes=useRef(Promise.resolve());
+  const [order, setOrder] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(storageKey)) || {};
+    } catch {
+      return {};
+    }
+  });
+  const [orderReady, ready] = useState(false),
+    writes = useRef(Promise.resolve());
   useEffect(() => {
-    let live=true;
-    api.command('conversations.order').then(remote => {
-      if(live && Object.keys(remote).length) {setOrder(remote);localStorage.setItem(storageKey,JSON.stringify(remote));}
-    }).catch(tell).finally(() => {if(live)ready(true);});
-    return () => {live=false;};
-  },[api,storageKey]);
-  const sorted = (items,group) => {
-    const ids=order[group] || [];
-    const rank=id => ids.includes(id) ? ids.indexOf(id) : Number.MAX_SAFE_INTEGER;
-    return [...items].sort((a,b) => rank(a.id)-rank(b.id));
+    let live = true;
+    api
+      .command('conversations.order')
+      .then((remote) => {
+        if (live && Object.keys(remote).length) {
+          setOrder(remote);
+          localStorage.setItem(storageKey, JSON.stringify(remote));
+        }
+      })
+      .catch(tell)
+      .finally(() => {
+        if (live) ready(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [api, storageKey]);
+  const sorted = (items, group) => {
+    const ids = order[group] || [];
+    const rank = (id) =>
+      ids.includes(id) ? ids.indexOf(id) : Number.MAX_SAFE_INTEGER;
+    return [...items].sort((a, b) => rank(a.id) - rank(b.id));
   };
-  function shift(items,group,index,offset) {
-    const ids=items.map(x => x.id), target=index+offset;
-    if(target<0 || target>=ids.length)return;
-    [ids[index],ids[target]]=[ids[target],ids[index]];
-    const next={...order,[group]:ids}; localStorage.setItem(storageKey,JSON.stringify(next)); setOrder(next);
-    writes.current=writes.current.then(() => api.command('conversations.arrange',{group,ids})).catch(tell);
+  function shift(items, group, index, offset) {
+    const ids = items.map((x) => x.id),
+      target = index + offset;
+    if (target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    const next = { ...order, [group]: ids };
+    localStorage.setItem(storageKey, JSON.stringify(next));
+    setOrder(next);
+    writes.current = writes.current
+      .then(() => api.command('conversations.arrange', { group, ids }))
+      .catch(tell);
   }
-  useEffect(() => {if(showing)expand(true);},[showing]);
-  const rail=document.getElementById('conversation-navigation');
-  const groupList=(items,group,dm) => {
-    const rows=sorted(items,group);
-    return <><h4>{group}</h4>{rows.map((item,i) => <div className="conversation-row" key={item.id}>
-      <button className={'nav-item sub '+(showing && (dm ? peerId === item.id : ch?.id === item.id) ? 'selected' : '')}
-        disabled={dm && job.busy} onClick={() => dm ? openDirect(item.id) : onSelect(item.id)}>
-        {dm ? <PersonIcon person={item} state={presence[item.id]}/> : item.kind === 'announcement' ? <Megaphone/> : <Hash/>}
-        <span>{item.name}</span></button>
-      {ordering && !query && <><IconButton icon={ArrowUp} label={'Move '+item.name+' up'} disabled={!i} onClick={() => shift(rows,group,i,-1)}/>
-        <IconButton icon={ArrowDown} label={'Move '+item.name+' down'} disabled={i === rows.length-1} onClick={() => shift(rows,group,i,1)}/></>}
-    </div>)}</>;
+  useEffect(() => {
+    if (showing) expand(true);
+  }, [showing]);
+  const rail = document.getElementById('conversation-navigation');
+  const groupList = (items, group, dm) => {
+    const rows = sorted(items, group);
+    return (
+      <>
+        <h4>{group}</h4>
+        {rows.map((item, i) => (
+          <div className="conversation-row" key={item.id}>
+            <button
+              className={
+                'nav-item sub ' +
+                (showing && (dm ? peerId === item.id : ch?.id === item.id)
+                  ? 'selected'
+                  : '')
+              }
+              disabled={dm && job.busy}
+              onClick={() => (dm ? openDirect(item.id) : onSelect(item.id))}
+            >
+              {dm ? (
+                <PersonIcon person={item} state={presence[item.id]} />
+              ) : item.kind === 'announcement' ? (
+                <Megaphone />
+              ) : (
+                <Hash />
+              )}
+              <span>{item.name}</span>
+            </button>
+            {ordering && !query && (
+              <>
+                <IconButton
+                  icon={ArrowUp}
+                  label={'Move ' + item.name + ' up'}
+                  disabled={!i}
+                  onClick={() => shift(rows, group, i, -1)}
+                />
+                <IconButton
+                  icon={ArrowDown}
+                  label={'Move ' + item.name + ' down'}
+                  disabled={i === rows.length - 1}
+                  onClick={() => shift(rows, group, i, 1)}
+                />
+              </>
+            )}
+          </div>
+        ))}
+      </>
+    );
   };
-  return (<>
-    {rail && createPortal(<><div className="conversation-heading">
-      <button className={'nav-item '+(showing ? 'selected' : '')} aria-expanded={expanded} onClick={() => {expand(!expanded);if(!expanded)refresh(n => n+1);}}>
-        <MessagesSquare/>Channels{expanded ? <ChevronDown/> : <ChevronRight/>}</button>
-      {isAdmin(me) && <IconButton icon={Plus} label="New channel" onClick={() => setEdit({})}/>}
-      </div>{expanded && <div className="conversation-list">
-        <input type="search" aria-label="Find conversations" placeholder="Find a conversation" value={query} onChange={e => search(e.target.value)}/>
-        {groupList(visible,'Channels',false)}{groupList(people,'Direct messages',true)}
-        <button disabled={!orderReady} className="rail-order" onClick={() => {search('');reorder(!ordering);}}>{ordering ? 'Done arranging' : 'Arrange conversations'}</button>
-        <ErrorText error={listError || job.error}/>
-      </div>}</>,rail)}
-    {showing && <div className="chat-page"><div className="channel-layout conversation-only">
-      {ch ? <Feed key={ch.id} {...{api,ch,me,members,tell,presence}}
-        configure={isAdmin(me) && !peerId ? () => setEdit(ch) : null}/> : <Empty>Choose a channel or teammate in the sidebar.</Empty>}
-    </div></div>}
+  return (
+    <>
+      {rail &&
+        createPortal(
+          <>
+            <div className="conversation-heading">
+              <button
+                className={'nav-item ' + (showing ? 'selected' : '')}
+                aria-expanded={expanded}
+                onClick={() => {
+                  expand(!expanded);
+                  if (!expanded) refresh((n) => n + 1);
+                }}
+              >
+                <MessagesSquare />
+                Channels{expanded ? <ChevronDown /> : <ChevronRight />}
+              </button>
+              {isAdmin(me) && (
+                <IconButton
+                  icon={Plus}
+                  label="New channel"
+                  onClick={() => setEdit({})}
+                />
+              )}
+            </div>
+            {expanded && (
+              <div className="conversation-list">
+                <input
+                  type="search"
+                  aria-label="Find conversations"
+                  placeholder="Find a conversation"
+                  value={query}
+                  onChange={(e) => search(e.target.value)}
+                />
+                {groupList(visible, 'Channels', false)}
+                {groupList(people, 'Direct messages', true)}
+                <button
+                  disabled={!orderReady}
+                  className="rail-order"
+                  onClick={() => {
+                    search('');
+                    reorder(!ordering);
+                  }}
+                >
+                  {ordering ? 'Done arranging' : 'Arrange conversations'}
+                </button>
+                <ErrorText error={listError || job.error} />
+              </div>
+            )}
+          </>,
+          rail,
+        )}
+      {showing && (
+        <div className="chat-page">
+          <div className="channel-layout conversation-only">
+            {ch ? (
+              <Feed
+                key={ch.id}
+                {...{ api, ch, me, members, tell, presence, meeting }}
+                configure={isAdmin(me) && !peerId ? () => setEdit(ch) : null}
+              />
+            ) : (
+              <Empty>Choose a channel or teammate in the sidebar.</Empty>
+            )}
+          </div>
+        </div>
+      )}
       {edit && (
         <ChannelSettings
           {...{ api, members }}
@@ -612,7 +1064,7 @@ export default function Channels({
           onClose={() => setEdit(null)}
           saved={(id) => {
             setEdit(null);
-            refresh(n => n + 1);
+            refresh((n) => n + 1);
             onSelect(id);
           }}
         />

@@ -108,6 +108,37 @@ export function webUrl(value) {
     'Enter an HTTP or HTTPS address.',
   );
 }
+export function figmaEmbed(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {}
+  check(
+    url?.protocol === 'https:' &&
+      ['www.figma.com', 'figma.com', 'embed.figma.com'].includes(
+        url.hostname,
+      ) &&
+      !url.username &&
+      !url.password &&
+      !url.port,
+    'Paste a Figma design, FigJam board, or prototype link.',
+  );
+  const match = url.pathname.match(
+    /^\/(design|file|board|proto|slides|deck)\/([A-Za-z0-9]{10,128})(?:\/|$)/,
+  );
+  check(match, 'Open the file in Figma and copy its share link.');
+  const embed = new URL(
+    'https://embed.figma.com/' +
+      (match[1] === 'file' ? 'design' : match[1]) +
+      '/' +
+      match[2],
+  );
+  for (const key of ['node-id', 'page-id', 'starting-point-node-id'])
+    if (url.searchParams.has(key))
+      embed.searchParams.set(key, url.searchParams.get(key).slice(0, 128));
+  embed.searchParams.set('embed-host', 'monexus-workspace');
+  return embed.href;
+}
 export const newId = (prefix) =>
   prefix + '_' + crypto.randomUUID().replaceAll('-', '').slice(0, 20);
 const opt = (id, label, active = true) => ({ id, label, active });
@@ -265,11 +296,34 @@ export function cleanConfig(input, previous) {
     );
     return clean;
   });
-  check(
-    !previous ||
-      previous.fields.every((f) => cfg.fields.some((n) => n.key === f.key)),
-    'Disable existing fields to preserve ticket history.',
-  );
+  const page = input.page || previous?.page || {};
+  cfg.page = {
+    view: page.view === 'list' ? 'list' : 'board',
+    compact: !!page.compact,
+    tint: !!page.tint,
+    description: page.description !== false,
+  };
+  const timing = input.timing || previous?.timing || {};
+  cfg.timing = {
+    enabled: timing.enabled === true,
+    start: timing.start || 'doing',
+    finish: timing.finish || 'done',
+  };
+  if (cfg.timing.enabled) {
+    check(
+      cfg.timing.start !== cfg.timing.finish &&
+        [cfg.timing.start, cfg.timing.finish].every((key) =>
+          cfg.columns.some((c) => c.id === key),
+        ),
+      'Choose two different existing columns for automatic timing.',
+    );
+    const actual = cfg.fields.find((f) => f.key === 'actual');
+    check(
+      actual?.enabled && actual.kind === 'number',
+      'Enable the Real hours field to use automatic timing.',
+    );
+    actual.required = false;
+  }
   const title = cfg.fields.find((f) => f.key === 'title');
   check(
     title?.kind === 'text' && title.enabled && title.required,

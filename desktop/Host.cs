@@ -56,6 +56,9 @@ internal class WorkspaceWindow : Form {
             await view.EnsureCoreWebView2Async(env);var core=view.CoreWebView2;
             core.Settings.AreDevToolsEnabled=false;core.Settings.AreHostObjectsAllowed=false;core.Settings.IsStatusBarEnabled=false;
             core.SetVirtualHostNameToFolderMapping("workspace.monexus.local",Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"web"),CoreWebView2HostResourceAccessKind.DenyCors);
+            var meetingAlarm = new System.Windows.Forms.Timer();
+            meetingAlarm.Tick += (s,e) => {meetingAlarm.Stop();core.PostWebMessageAsJson("{\"kind\":\"meeting_clock\"}");};
+            FormClosed += (s,e) => meetingAlarm.Dispose();
             core.NavigationStarting+=(s,e)=>{if(!Local(e.Uri))e.Cancel=true;};
             core.NewWindowRequested+=(s,e)=>{e.Handled=true;if(e.IsUserInitiated)OpenWeb(e.Uri);};
             core.WebMessageReceived+=(s,e)=>{
@@ -63,6 +66,11 @@ internal class WorkspaceWindow : Form {
                 try {
                     var msg=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(e.WebMessageAsJson);
                     string command=Convert.ToString(msg["command"]);
+                    if(command=="meeting_alarm"){
+                        meetingAlarm.Stop();
+                        double delay=Convert.ToDouble(msg["delay"]);
+                        if(delay>0){meetingAlarm.Interval=(int)Math.Min(Int32.MaxValue,Math.Ceiling(delay));meetingAlarm.Start();}
+                    }
                     if(command=="update"){
                         string setup=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Programs","Monexus Workspace","MonexusSetup.exe");
                         if(File.Exists(setup))Process.Start(setup,"/update");

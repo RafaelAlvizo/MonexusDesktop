@@ -116,13 +116,18 @@ export default function Board({
   clearJump,
   tell,
 }) {
+  const [viewers, setViewers] = useState([]);
+  useEffect(
+    () => board && api.boardPresence(board.id, setViewers, tell),
+    [api, board?.id],
+  );
   const [tickets, setTickets] = useState([]),
     [limit, setLimit] = useState(80),
-    [mode, setMode] = useState('board'),
+    [mode, setMode] = useState(board?.page?.view || 'board'),
     [search, setSearch] = useState(''),
     [priority, setPriority] = useState(''),
     [person, setPerson] = useState(''),
-    [due,setDue] = useState(''),
+    [due, setDue] = useState(''),
     [fields, setFields] = useState({}),
     [filter, filters] = useState(false),
     [config, setConfig] = useState(''),
@@ -167,12 +172,26 @@ export default function Board({
       alive = false;
     };
   }, [api, jump, board?.id]);
+  useEffect(() => setMode(board?.page?.view || 'board'), [board?.page?.view]);
   const role = board && level(board, me),
     canMove = board && allows(role, board.policy.move),
     canCreate = board && allows(role, board.policy.create);
   const today=new Date();
   const day = d => [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
   const week=new Date(today);week.setDate(week.getDate()+7);
+  useEffect(() => {
+    const enabled = new Set(
+      (board?.fields || []).filter((f) => f.enabled).map((f) => f.key),
+    );
+    if (!enabled.has('priority')) setPriority('');
+    if (!enabled.has('assignee')) setPerson('');
+    if (!enabled.has('due')) setDue('');
+    setFields((old) =>
+      Object.fromEntries(
+        Object.entries(old).filter(([key]) => enabled.has(key)),
+      ),
+    );
+  }, [board?.rev]);
   const filtering=!!(priority || person || due || Object.values(fields).some(Boolean));
   const visible = tickets.filter(
     (t) =>
@@ -214,7 +233,27 @@ export default function Board({
   return (
     <>
       {board ? (
-        <div className="board-page">
+        <div
+          className={
+            'board-page' + (board.page?.compact ? ' compact-board' : '')
+          }
+          style={
+            board.page?.tint
+              ? {
+                  '--header-tint': {
+                    green: '#50a876',
+                    blue: '#438fd2',
+                    rose: '#ca6782',
+                    gold: '#cda644',
+                    violet: '#9571ce',
+                    teal: '#3caba2',
+                    slate: '#8793a2',
+                    orange: '#d18c50',
+                  }[board.color],
+                }
+              : undefined
+          }
+        >
           <div className="board-heading">
             <div>
               <div className="eyebrow">
@@ -222,7 +261,9 @@ export default function Board({
                 {board.project}
               </div>
               <h1>{board.name}</h1>
-              {board.description && <p>{board.description}</p>}
+              {board.page?.description !== false && board.description && (
+                <p>{board.description}</p>
+              )}
             </div>
             <div className="board-actions">
               {role === 'admin' && (
@@ -242,11 +283,25 @@ export default function Board({
             </div>
           </div>
           <div className="board-meta">
-            <div className="avatar-stack">
-              {people.slice(0, 5).map((m) => (
-                <Avatar key={m.id} person={m} small />
-              ))}
+            <div
+              className="board-here"
+              aria-label="Currently viewing this board"
+            >
+              <Signal size={15} />
+              <strong>Here now</strong>
+              {viewers.map((uid) => {
+                const m = members.find((p) => p.id === uid);
+                return (
+                  m && (
+                    <span key={uid}>
+                      <Avatar person={m} small />
+                      {m.name}
+                    </span>
+                  )
+                );
+              })}
             </div>
+
             <span>
               {people.length} member{people.length !== 1 ? 's' : ''}
             </span>
@@ -291,51 +346,82 @@ export default function Board({
                 onClick={() => filters(!filter)}
               >
                 <SlidersHorizontal size={15} />
-                Filter{(filtering) && ' •'}
+                Filter{filtering && ' •'}
               </button>
             </div>
           </div>
           {filter && (
             <div className="filter-row">
-              <label>
-                Priority{' '}
-                <select
-                  value={priority}
-                  onChange={(e) => setPriority(e.target.value)}
-                >
-                  <option value="">All priorities</option>
-                  {board.fields
-                    .find((f) => f.key === 'priority')
-                    ?.options.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.label}
+              {board.fields.some((f) => f.enabled && f.key === 'priority') && (
+                <label>
+                  Priority{' '}
+                  <select
+                    value={priority}
+                    onChange={(e) => setPriority(e.target.value)}
+                  >
+                    <option value="">All priorities</option>
+                    {board.fields
+                      .find((f) => f.key === 'priority')
+                      ?.options.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              )}
+              {board.fields.some((f) => f.enabled && f.key === 'assignee') && (
+                <label>
+                  Assignee{' '}
+                  <select
+                    value={person}
+                    onChange={(e) => setPerson(e.target.value)}
+                  >
+                    <option value="">All members</option>
+                    <option value="_unassigned">Unassigned</option>
+                    {people.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
                       </option>
                     ))}
-                </select>
-              </label>
-              <label>
-                Assignee{' '}
-                <select
-                  value={person}
-                  onChange={(e) => setPerson(e.target.value)}
-                >
-                  <option value="">All members</option><option value="_unassigned">Unassigned</option>
-                  {people.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {board.fields.some(f => f.enabled && f.key === 'due') && <label>Due date<select value={due} onChange={e => setDue(e.target.value)}>
-                <option value="">Any date</option><option value="late">Overdue</option><option value="week">Next seven days</option><option value="unset">No due date</option></select></label>}
-              {board.fields.filter(f => f.enabled && f.key !== 'priority'  && f.options?.length > 0).map(f =>
-                <label key={f.key}>{f.label}
-                  <select aria-label={f.label} value={fields[f.key] || ''} onChange={e => setFields({...fields,[f.key]:e.target.value})}>
-                    <option value="">All</option>
-                    {f.options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                   </select>
-                </label>)}
+                </label>
+              )}
+              {board.fields.some((f) => f.enabled && f.key === 'due') && (
+                <label>
+                  Due date
+                  <select value={due} onChange={(e) => setDue(e.target.value)}>
+                    <option value="">Any date</option>
+                    <option value="late">Overdue</option>
+                    <option value="week">Next seven days</option>
+                    <option value="unset">No due date</option>
+                  </select>
+                </label>
+              )}
+              {board.fields
+                .filter(
+                  (f) =>
+                    f.enabled && f.key !== 'priority' && f.options?.length > 0,
+                )
+                .map((f) => (
+                  <label key={f.key}>
+                    {f.label}
+                    <select
+                      aria-label={f.label}
+                      value={fields[f.key] || ''}
+                      onChange={(e) =>
+                        setFields({ ...fields, [f.key]: e.target.value })
+                      }
+                    >
+                      <option value="">All</option>
+                      {f.options.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
               <button
                 className="text-btn"
                 onClick={() => {
@@ -395,9 +481,7 @@ export default function Board({
                       ))}
                       {!items.length && (
                         <div className="empty-lane">
-                          {search || filtering
-                            ? 'No matches'
-                            : 'No tickets'}
+                          {search || filtering ? 'No matches' : 'No tickets'}
                         </div>
                       )}
                     </div>
@@ -476,6 +560,11 @@ export default function Board({
           <Config
             {...{ api, me, members, board: config === 'new' ? null : board }}
             onClose={() => setConfig('')}
+            onDeleted={() => {
+              setConfig('');
+              choose('');
+              tell('Board deleted.');
+            }}
             onSaved={(k) => {
               setConfig('');
               choose(k);

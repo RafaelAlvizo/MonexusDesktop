@@ -36,6 +36,49 @@ function FieldLabel({ group, name, children, ...rest }) {
   return <div className="label"><span id={labelId}>{name}</span>
     {React.cloneElement(children, { 'aria-labelledby': labelId })}</div>;
 }
+function RecordedTime({ board, ticket, 'aria-labelledby': labelId }) {
+  const tracking = board.timing,
+    epoch = tracking.since ?? board.createdAt;
+  const timer =
+    ticket?.timer && ticket.timer.epoch === epoch ? ticket.timer : null;
+  const since =
+    timer?.running ??
+    (!timer && ticket?.column === tracking.start && ticket.updatedAt <= epoch
+      ? epoch
+      : null);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (since == null) return;
+    setNow(Date.now());
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, [since]);
+  const ms = timer?.elapsed ?? (ticket?.values.actual || 0) * 3600000;
+  const seconds = Math.floor(
+    (ms + (since === null ? 0 : Math.max(0, now - since))) / 1000,
+  );
+  const duration =
+    Math.floor(seconds / 3600) +
+    'h ' +
+    (Math.floor(seconds / 60) % 60) +
+    'm ' +
+    (seconds % 60) +
+    's';
+  const column = (key) => board.columns.find((c) => c.id === key)?.name || key;
+  return (
+    <div className="recorded-time">
+      <output aria-labelledby={labelId}>{duration}</output>
+      <small>
+        {since !== null
+          ? 'Recording until ' + column(tracking.finish)
+          : 'Automatic · ' +
+            column(tracking.start) +
+            ' → ' +
+            column(tracking.finish)}
+      </small>
+    </div>
+  );
+}
 function Input({ f, v, change, disabled, people, 'aria-labelledby': labelId }) {
   const shared = { disabled, required: f.required, 'aria-labelledby': labelId };
   if (f.kind === 'longtext')
@@ -258,8 +301,13 @@ export default function Ticket({
       const missing = board.fields.find(f => f.enabled && f.required && empty(current.values[f.key]));
       if (missing) throw Error('Enter ' + missing.label + ' to save this ticket.');
       const prior = saved.current;
-      const values = Object.fromEntries(Object.entries(current.values).filter(([field,value]) =>
-        JSON.stringify(value) !== JSON.stringify(prior?.values[field])));
+      const values = Object.fromEntries(
+        Object.entries(current.values).filter(
+          ([field, value]) =>
+            !(board.timing?.enabled && field === 'actual') &&
+            JSON.stringify(value) !== JSON.stringify(prior?.values[field]),
+        ),
+      );
       setSaveState('Saving…');
       const result = await api.command('ticket.save', { ...current, values, board:board.id,
         id:identity.current, rev:prior?.rev ?? null, returnTicket:true });
@@ -321,53 +369,58 @@ export default function Ticket({
                       f.kind === 'longtext'
                     }
                   >
-                    <Input
-                      f={f}
-                      v={vals[f.key]}
-                      change={(v) => setVals((s) => ({ ...s, [f.key]: v }))}
-                      disabled={!canEdit || !allows(role, f.editRole)}
-                      people={people}
-                    />
+                    {f.key === 'actual' && board.timing?.enabled ? (
+                      <RecordedTime board={board} ticket={t} />
+                    ) : (
+                      <Input
+                        f={f}
+                        v={vals[f.key]}
+                        change={(v) => setVals((s) => ({ ...s, [f.key]: v }))}
+                        disabled={!canEdit || !allows(role, f.editRole)}
+                        people={people}
+                      />
+                    )}
                   </FieldLabel>
                 ))}
             </div>
             <section className="ticket-workflow">
               <h3>Workflow</h3>
-              <div className="form-grid"><Label name="Column">
-                <select
-                  value={status}
-                  disabled={!canMove}
-                  onChange={(e) => move(e.target.value)}
-                >
-                  {board.columns.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </Label>
-              {board.features.parents && (
-                <Label name="Parent ticket">
+              <div className="form-grid">
+                <Label name="Column">
                   <select
-                    disabled={!canEdit}
-                    value={parent}
-                    onChange={(e) => setParent(e.target.value)}
+                    value={status}
+                    disabled={!canMove}
+                    onChange={(e) => move(e.target.value)}
                   >
-                    <option value="">No parent</option>
-                    {parent && !tickets.some((t) => t.id === parent) && (
-                      <option value={parent}>Linked parent</option>
-                    )}
-                    {tickets
-                      .filter((x) => x.id !== t?.id)
-                      .map((x) => (
-                        <option key={x.id} value={x.id}>
-                          {ticketKey(board, x)} · {x.values.title}
-                        </option>
-                      ))}
+                    {board.columns.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
                   </select>
                 </Label>
-              )}
-            </div>
+                {board.features.parents && (
+                  <Label name="Parent ticket">
+                    <select
+                      disabled={!canEdit}
+                      value={parent}
+                      onChange={(e) => setParent(e.target.value)}
+                    >
+                      <option value="">No parent</option>
+                      {parent && !tickets.some((t) => t.id === parent) && (
+                        <option value={parent}>Linked parent</option>
+                      )}
+                      {tickets
+                        .filter((x) => x.id !== t?.id)
+                        .map((x) => (
+                          <option key={x.id} value={x.id}>
+                            {ticketKey(board, x)} · {x.values.title}
+                          </option>
+                        ))}
+                    </select>
+                  </Label>
+                )}
+              </div>
             </section>
             {board.features.parents &&
               canEdit &&
@@ -494,7 +547,10 @@ export default function Ticket({
                   canAdd={canAttach}
                 />
               ) : (
-                <p className="muted">Attachments become available when the required fields are filled in.</p>
+                <p className="muted">
+                  Attachments become available when the required fields are
+                  filled in.
+                </p>
               ))}
             {t && (
               <div className="audit-line">
@@ -516,10 +572,18 @@ export default function Ticket({
         <ErrorText error={job.error} />
       </div>
       <footer>
-        <div className="grow" role="status">{saveError || saveState}</div>
-        {saveError && <><Btn onClick={() => flush().catch(failed)}>Retry</Btn>
-          <Btn onClick={onClose}>Discard unsaved changes</Btn></>}
-        <Btn kind="primary" onClick={close}>Done</Btn>
+        <div className="grow" role="status">
+          {saveError || saveState}
+        </div>
+        {saveError && (
+          <>
+            <Btn onClick={() => flush().catch(failed)}>Retry</Btn>
+            <Btn onClick={onClose}>Discard unsaved changes</Btn>
+          </>
+        )}
+        <Btn kind="primary" onClick={close}>
+          Done
+        </Btn>
       </footer>
     </Modal>
   );
