@@ -1,0 +1,49 @@
+name: Windows release
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: monexus-windows-release
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      MONEXUS_RELEASE_VERSION: 1.3.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node --test tests/desktop-model.test.mjs
+      - run: npm run installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: release/Monexus-Workspace-Setup-x64.exe
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+      - name: Publish installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: v1.3.${{ github.run_number }}
+        run: |
+          set -eu
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already published."
+          else
+            gh release create "$RELEASE_TAG" Monexus-Workspace-Setup-x64.exe --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Monexus Workspace ${RELEASE_TAG#v}" --notes "Windows x64 installer built from $GITHUB_SHA." --latest
+          fi

@@ -1,0 +1,106 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows.Forms;
+using System.Web.Script.Serialization;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
+using Windows.Data.Xml.Dom;
+using Windows.UI.Notifications;
+
+internal class WorkspaceWindow : Form {
+    const string Origin = "https://workspace.monexus.local";
+    const string AppId = "Monexus.Workspace";
+    readonly WebView2 view = new WebView2();
+    readonly NotifyIcon tray = new NotifyIcon();
+    readonly EventWaitHandle showEvent;
+    RegisteredWaitHandle showWait;
+    bool quitting;
+    [DllImport("shell32.dll", CharSet=CharSet.Unicode)] static extern int SetCurrentProcessExplicitAppUserModelID(string id);
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+
+    [STAThread] static void Main() {
+        SetProcessDPIAware();
+        SetCurrentProcessExplicitAppUserModelID(AppId);
+        bool first;
+        using(var signal = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\Monexus.Workspace.Show", out first)) {
+            if(!first) { signal.Set(); return; }
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new WorkspaceWindow(signal));
+        }
+    }
+    WorkspaceWindow(EventWaitHandle signal) {
+        showEvent=signal;Text="Monexus Workspace " + BuildVersion.Value;MinimumSize=new Size(880,600);
+        var screen=Screen.PrimaryScreen.WorkingArea;Width=Math.Min(1440,screen.Width);Height=Math.Min(900,screen.Height);
+        StartPosition=FormStartPosition.CenterScreen;Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        view.Dock=DockStyle.Fill;Controls.Add(view);
+        var menu=new ContextMenuStrip();menu.Items.Add("Open Monexus Workspace",null,delegate { RestoreWorkspace(); });menu.Items.Add("Quit Monexus Workspace",null,delegate { quitting=true;Close(); });
+        tray.Text=Text;tray.Icon=Icon;tray.ContextMenuStrip=menu;tray.Visible=true;
+        tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)RestoreWorkspace();};
+        Shown+=StartWebView;
+        FormClosing+=(s,e)=>{if(!quitting&&e.CloseReason==CloseReason.UserClosing){e.Cancel=true;Hide();}};
+        FormClosed+=(s,e)=>{if(showWait!=null)showWait.Unregister(null);tray.Visible=false;tray.Dispose();};
+    }
+    void RestoreWorkspace(){Show();if(WindowState==FormWindowState.Minimized)WindowState=FormWindowState.Normal;Activate();}
+    async void StartWebView(object sender,EventArgs args) {
+        showWait=ThreadPool.RegisterWaitForSingleObject(showEvent,(o,t)=>{if(!IsDisposed)BeginInvoke(new Action(RestoreWorkspace));},null,Timeout.Infinite,false);
+        try {
+            string profile=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Monexus","WebView");
+            var env=await CoreWebView2Environment.CreateAsync(null,profile,null);
+            await view.EnsureCoreWebView2Async(env);var core=view.CoreWebView2;
+            core.Settings.AreDevToolsEnabled=false;core.Settings.AreHostObjectsAllowed=false;core.Settings.IsStatusBarEnabled=false;
+            core.SetVirtualHostNameToFolderMapping("workspace.monexus.local",Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"web"),CoreWebView2HostResourceAccessKind.DenyCors);
+            core.NavigationStarting+=(s,e)=>{if(!Local(e.Uri))e.Cancel=true;};
+            core.NewWindowRequested+=(s,e)=>{e.Handled=true;if(e.IsUserInitiated)OpenWeb(e.Uri);};
+            core.WebMessageReceived+=(s,e)=>{
+                if(!Local(e.Source))return;
+                try {
+                    var msg=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(e.WebMessageAsJson);
+                    string command=Convert.ToString(msg["command"]);
+                    if(command=="update"){
+                        string setup=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Programs","Monexus Workspace","MonexusSetup.exe");
+                        if(File.Exists(setup))Process.Start(setup,"/update");
+                        else MessageBox.Show(this,"Run the Monexus Workspace installer to enable updates.");
+                    }
+                    if(command=="open_link")OpenWeb(Convert.ToString(msg["url"]));
+                    if(command=="minimize")WindowState=FormWindowState.Minimized;
+                    if(command=="tray")Hide();
+                    if(command=="restore")RestoreWorkspace();
+                    if(command=="window_state")core.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new {kind="window_state",visible=Visible,minimized=WindowState==FormWindowState.Minimized}));
+                    if(command=="deliver_notification"){
+                        bool sound=Convert.ToBoolean(msg["sound"]),banner=Convert.ToBoolean(msg["banner"]);
+                        string title=Convert.ToString(msg["title"]),body=Convert.ToString(msg["body"]);
+                        if(banner && (!Visible || WindowState==FormWindowState.Minimized || GetForegroundWindow()!=Handle)){
+                            try { Banner(title,body,sound); core.PostWebMessageAsJson("{\"kind\":\"notification_delivery\",\"method\":\"windows\",\"accepted\":true}"); }
+                            catch (Exception error) {
+                                core.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new {kind="notification_delivery",method="windows",accepted=false,hresult=error.HResult}));
+                                throw;
+                            }
+                        }
+                        else {
+                            if(banner)core.PostWebMessageAsString(title+" · "+body);
+                            if(sound)System.Media.SystemSounds.Asterisk.Play();
+                            core.PostWebMessageAsJson("{\"kind\":\"notification_delivery\",\"method\":\"in-app\",\"accepted\":true}");
+                        }
+                    }
+                    if(command=="quit"){quitting=true;Close();}
+                } catch(Exception){core.PostWebMessageAsString("Windows could not complete the desktop action.");}
+            };
+            core.Navigate(Origin+"/index.html");
+        } catch(Exception e) { MessageBox.Show("Monexus needs the Microsoft Edge WebView2 Evergreen Runtime.\n\n"+e.Message,Text,MessageBoxButtons.OK,MessageBoxIcon.Error);quitting=true;Close(); }
+    }
+    static bool Local(string address){Uri u;return Uri.TryCreate(address,UriKind.Absolute,out u)&&u.GetLeftPart(UriPartial.Authority)==Origin;}
+    static void OpenWeb(string address){Uri u;if(Uri.TryCreate(address,UriKind.Absolute,out u)&&(u.Scheme=="https"||u.Scheme=="http")&&String.IsNullOrEmpty(u.UserInfo))Process.Start(new ProcessStartInfo(u.AbsoluteUri){UseShellExecute=true});}
+    static void Banner(string title,string body,bool sound){
+        var xml=new XmlDocument();
+        xml.LoadXml("<toast activationType=\"protocol\" launch=\"monexus-workspace:open\"><visual><binding template=\"ToastGeneric\"><text/><text/></binding></visual>"+(sound?"":"<audio silent=\"true\"/>")+"</toast>");
+        var nodes=xml.GetElementsByTagName("text");nodes[0].InnerText=title;nodes[1].InnerText=body;
+        ToastNotificationManager.CreateToastNotifier(AppId).Show(new ToastNotification(xml));
+    }
+}
