@@ -1,3 +1,4 @@
+import {Access,FolderPicker} from './Sharing.jsx';
 import React, { useState } from 'react';
 import {
   Plus,
@@ -28,57 +29,6 @@ import {
   saveFile,
 } from '../ui.jsx';
 const names = { docs: 'Documentation', drive: 'Drive', links: 'Apps & links' };
-const selected = (e) => [...e.target.selectedOptions].map((o) => o.value);
-function Access({ acl, set, members, title = 'Visibility' }) {
-  return (
-    <details open>
-      <summary>{title}</summary>
-      <Check
-        checked={acl.everyone}
-        onChange={(e) => set({ ...acl, everyone: e.target.checked })}
-      >
-        Company-wide
-      </Check>
-      <div className="form-grid">
-        <Label name="Allow roles">
-          <select
-            multiple
-            value={acl.roles}
-            onChange={(e) => set({ ...acl, roles: selected(e) })}
-          >
-            {['owner', 'admin', 'member'].map((k) => (
-              <option key={k}>{k}</option>
-            ))}
-          </select>
-        </Label>
-        {[
-          ['users', 'Allow people'],
-          ['exclude', 'Exclude people'],
-        ].map(([k, n]) => (
-          <Label key={k} name={n}>
-            <select
-              multiple
-              value={acl[k]}
-              onChange={(e) => set({ ...acl, [k]: selected(e) })}
-            >
-              {members
-                .filter((m) => m.active)
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-            </select>
-          </Label>
-        ))}
-      </div>
-      <p className="muted">
-        Exclusions take precedence. Files also inherit each parent folder’s
-        restrictions.
-      </p>
-    </details>
-  );
-}
 function Editor({
   api,
   area,
@@ -162,7 +112,7 @@ function Editor({
                 : ['link', 'file', 'folder']
               ).map((k) => (
                 <option key={k} value={k}>
-                  {k === 'file' && area === 'docs' ? 'PDF' : k}
+                  {k}
                 </option>
               ))}
             </select>
@@ -188,10 +138,9 @@ function Editor({
         ) : (
           <>
             {v.kind === 'file' && !v.ready && (
-              <Label name={area === 'docs' ? 'PDF file' : 'File'}>
+              <Label name="File">
                 <input
                   type="file"
-                  accept={area === 'docs' ? 'application/pdf' : undefined}
                   onChange={(e) => {
                     const f = e.target.files[0];
                     choose(f);
@@ -214,16 +163,22 @@ function Editor({
                 />
               </Label>
             </div>
+            {canManage && initial && <><FolderPicker {...{api,area}} action="library.list" current={v.folder} exclude={v.id}
+              change={(folder,location) => patch({folder,location})}/>{v.location && <small>Location · {v.location}</small>}</>}
+            {canManage && v.folder && <Check checked={!!v.independent}
+              onChange={e => patch({independent:e.target.checked,...(e.target.checked && v.acl.everyone ? {acl:{...v.acl,everyone:false}} : {})})}>
+              Set independent access so selected people can open this item without its parent folder
+            </Check>}
             {canManage && (
               <Access
-                {...{ members }}
+                {...{ api, members }}
                 acl={v.acl}
                 set={(acl) => patch({ acl })}
               />
             )}{' '}
             {canManage && area === 'drive' && v.kind === 'folder' && (
               <Access
-                {...{ members }}
+                {...{ api, members }}
                 title="Who can upload here"
                 acl={
                   v.uploadAcl || {
@@ -355,7 +310,7 @@ export default function Resources({ api, me, members, area }) {
         </div>
       )}
       <div className="panel">
-        {page.items.map((n) => {
+        {[...page.items].sort((a,b) => Number(b.kind === 'folder')-Number(a.kind === 'folder') || a.name.localeCompare(b.name)).map((n) => {
           const I =
             n.kind === 'folder' ? Folder : n.kind === 'file' ? FileText : Link2;
           const open = () =>

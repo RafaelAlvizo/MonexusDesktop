@@ -46,6 +46,7 @@ export const events = [
   'mention',
   'announcement',
   'direct_message',
+  'channel_message',
 ];
 export const eventNames = {
   pr_opened: 'Pull request opened',
@@ -57,6 +58,7 @@ export const eventNames = {
   mention: 'Mention',
   announcement: 'Announcement',
   direct_message: 'Direct message',
+  channel_message: 'Channel message',
 };
 export const methods = ['inbox', 'banner', 'sound'];
 export const isAdmin = (user) => ['owner', 'admin'].includes(user?.role);
@@ -398,6 +400,7 @@ export function cleanAcl(a = {}) {
   return {
     everyone: a.everyone === true,
     roles: rolesList,
+    groups: ids(a.groups || []),
     users: ids(a.users || []),
     exclude: ids(a.exclude || []),
   };
@@ -409,6 +412,7 @@ export function aclAllows(acl, user) {
     !acl.exclude.includes(user.id) &&
     (acl.everyone ||
       acl.roles.includes(user.role) ||
+      (acl.groups || []).some(g => user.groups?.includes(g)) ||
       acl.users.includes(user.id))
   );
 }
@@ -421,7 +425,7 @@ export const defaultPrefs = {
   color: '#2c6956',
   events: {},
 };
-export const presenceStates = ['Online', 'Idle', 'Offline', 'Do Not Disturb'];
+export const presenceStates = ['Online', 'Offline', 'Do Not Disturb'];
 export function aggregatePresence(sessions = {}) {
   const values = Object.values(sessions || {}).map((s) => s.state);
   return (

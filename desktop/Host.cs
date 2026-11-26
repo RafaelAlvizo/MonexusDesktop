@@ -84,7 +84,7 @@ internal class WorkspaceWindow : Form {
                             }
                         }
                         else {
-                            if(banner)core.PostWebMessageAsString(title+" · "+body);
+                            if(banner)core.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new {kind="workspace_banner",title,body}));
                             if(sound)System.Media.SystemSounds.Asterisk.Play();
                             core.PostWebMessageAsJson("{\"kind\":\"notification_delivery\",\"method\":\"in-app\",\"accepted\":true}");
                         }

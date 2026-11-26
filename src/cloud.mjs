@@ -251,13 +251,16 @@ async function getWorkspace(user) {
         fail,
       );
     },
+    watchMessage(channel,key,cb,fail) {
+      return r.onValue(r.ref(rt,'messages/'+channel+'/'+key),s => cb(s.val()),fail);
+    },
     watchPresence(cb, fail) {
       return r.onValue(
         r.ref(rt, 'presence'),
         (snap) => {
           const map = {};
           snap.forEach((m) => {
-            const v = Object.values(m.val()).map((s) => s.state);
+            const v = Object.values(m.val()).map(s => s.state === 'Idle' ? 'Online' : s.state);
             map[m.key] =
               ['Do Not Disturb', 'Online', 'Idle'].find((k) => v.includes(k)) ||
               'Offline';
@@ -270,7 +273,8 @@ async function getWorkspace(user) {
     watchAlerts(cb, fail) {
       const after = Date.now(),
         seen = new Set();
-      return f.onSnapshot(
+      let live=true;
+      const off=f.onSnapshot(
         f.query(
           f.collection(db, 'members', uid, 'signals'),
           f.where('at', '>=', after),
@@ -282,20 +286,22 @@ async function getWorkspace(user) {
             if (change.type === 'added' && !seen.has(change.doc.id)) {
               seen.add(change.doc.id);
               const e = change.doc.data();
-              if (Date.now() - e.at < 120000) cb(e);
+              if (Date.now() - e.at < 120000) {
+                if(e.message) command('notification.detail',{id:e.id}).then(n => {if(n && live)cb(n);}).catch(fail);
+                else cb(e);
+              }
             }
         },
         fail,
       );
+      return () => {live=false;off();};
     },
     presence(mode, onState, onError) {
       const session = r.ref(rt, 'presence/' + uid + '/' + crypto.randomUUID()),
         disc = r.onDisconnect(session);
       let connected = false,
         closed = false,
-        timer,
-        last = 0,
-        state = mode;
+        state = mode === 'Idle' ? 'Online' : mode;
       const publish = (next) => {
         state = next;
         onState(next);
@@ -303,13 +309,6 @@ async function getWorkspace(user) {
           r.set(session, { state: next, at: r.serverTimestamp() }).catch(
             onError,
           );
-      };
-      const activity = () => {
-        if (mode !== 'Online' || Date.now() - last < 1000) return;
-        last = Date.now();
-        clearTimeout(timer);
-        if (state !== 'Online') publish('Online');
-        timer = setTimeout(() => publish('Idle'), 20 * 60 * 1000);
       };
       const off = r.onValue(r.ref(rt, '.info/connected'), async (snap) => {
         connected = false;
@@ -324,23 +323,10 @@ async function getWorkspace(user) {
         }
       });
       onState(state);
-      activity();
-      const signals = [
-        'pointerdown',
-        'pointermove',
-        'keydown',
-        'wheel',
-        'focus',
-      ];
-      signals.forEach((k) =>
-        window.addEventListener(k, activity, { passive: true }),
-      );
       const release = async () => {
         if (closed) return;
         closed = true;
         off();
-        clearTimeout(timer);
-        signals.forEach((k) => window.removeEventListener(k, activity));
         if (connected) {
           await r.remove(session);
           await disc.cancel();

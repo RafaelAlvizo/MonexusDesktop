@@ -122,6 +122,8 @@ export default function Board({
     [search, setSearch] = useState(''),
     [priority, setPriority] = useState(''),
     [person, setPerson] = useState(''),
+    [due,setDue] = useState(''),
+    [fields, setFields] = useState({}),
     [filter, filters] = useState(false),
     [config, setConfig] = useState(''),
     [ticket, edit] = useState(null),
@@ -168,10 +170,16 @@ export default function Board({
   const role = board && level(board, me),
     canMove = board && allows(role, board.policy.move),
     canCreate = board && allows(role, board.policy.create);
+  const today=new Date();
+  const day = d => [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
+  const week=new Date(today);week.setDate(week.getDate()+7);
+  const filtering=!!(priority || person || due || Object.values(fields).some(Boolean));
   const visible = tickets.filter(
     (t) =>
+      Object.entries(fields).every(([key, value]) => !value || (Array.isArray(t.values[key]) ? t.values[key].includes(value) : t.values[key] === value)) &&
       (!priority || t.values.priority === priority) &&
-      (!person || t.values.assignee === person) &&
+      (!due || (due === 'unset' ? !t.values.due : t.values.due && (due === 'late' ? t.values.due < day(today) : t.values.due >= day(today) && t.values.due <= day(week)))) &&
+      (!person || (person === '_unassigned' ? !t.values.assignee : t.values.assignee === person)) &&
       (!search ||
         [
           ticketKey(board, t),
@@ -279,11 +287,11 @@ export default function Board({
                 />
               </label>
               <button
-                className={'btn ' + (priority || person ? 'tinted' : '')}
+                className={'btn ' + (filtering ? 'tinted' : '')}
                 onClick={() => filters(!filter)}
               >
                 <SlidersHorizontal size={15} />
-                Filter{(priority || person) && ' •'}
+                Filter{(filtering) && ' •'}
               </button>
             </div>
           </div>
@@ -311,7 +319,7 @@ export default function Board({
                   value={person}
                   onChange={(e) => setPerson(e.target.value)}
                 >
-                  <option value="">All members</option>
+                  <option value="">All members</option><option value="_unassigned">Unassigned</option>
                   {people.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name}
@@ -319,9 +327,20 @@ export default function Board({
                   ))}
                 </select>
               </label>
+              {board.fields.some(f => f.enabled && f.key === 'due') && <label>Due date<select value={due} onChange={e => setDue(e.target.value)}>
+                <option value="">Any date</option><option value="late">Overdue</option><option value="week">Next seven days</option><option value="unset">No due date</option></select></label>}
+              {board.fields.filter(f => f.enabled && f.key !== 'priority'  && f.options?.length > 0).map(f =>
+                <label key={f.key}>{f.label}
+                  <select aria-label={f.label} value={fields[f.key] || ''} onChange={e => setFields({...fields,[f.key]:e.target.value})}>
+                    <option value="">All</option>
+                    {f.options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  </select>
+                </label>)}
               <button
                 className="text-btn"
                 onClick={() => {
+                  setDue('');
+                  setFields({});
                   setPerson('');
                   setPriority('');
                 }}
@@ -354,7 +373,7 @@ export default function Board({
                       <i className={'dot ' + col.color} />
                       <h2>{col.name}</h2>
                       <span className="count">
-                        {search || priority || person
+                        {search || filtering
                           ? items.length
                           : board.counts[col.id] || 0}
                       </span>
@@ -376,7 +395,7 @@ export default function Board({
                       ))}
                       {!items.length && (
                         <div className="empty-lane">
-                          {search || priority || person
+                          {search || filtering
                             ? 'No matches'
                             : 'No tickets'}
                         </div>

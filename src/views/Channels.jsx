@@ -1,3 +1,6 @@
+import {createPortal} from 'react-dom';
+import {ChevronDown, ChevronRight, MessagesSquare, ArrowUp, ArrowDown, Trash2} from 'lucide-react';
+import {saveFile} from '../ui.jsx';
 import React, { useEffect, useState, useRef } from 'react';
 import {
   Plus,
@@ -171,6 +174,33 @@ function PersonIcon({ person, state = 'Offline' }) {
     </span></span>;
 }
 
+function Preview({api,file}) {
+  const [url,setUrl] = useState(''), [error,setError] = useState('');
+  const kind = /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(file.mime) ? 'image' :
+    /^video\/(mp4|webm|ogg)$/.test(file.mime) ? 'video' : /^audio\/(mpeg|mp4|ogg|wav|webm)$/.test(file.mime) ? 'audio' : '';
+  const [load,start] = useState(file.size <= 24*1024*1024);
+  useEffect(() => {
+    if (!kind || !load) return;
+    let live=true, object;
+    api.fileBlob(file.id).then(blob => {
+      if (live) {object=URL.createObjectURL(blob.slice(0,blob.size,file.mime));setUrl(object);}
+    }).catch(e => {if(live)setError(e.message);});
+    return () => {live=false;if(object)URL.revokeObjectURL(object);};
+  },[api,file.id,kind,load]);
+  return <div className="chat-preview">
+    {url && (kind === 'image' ? <img src={url} alt={file.name}/> : kind === 'video' ?
+      <video controls preload="metadata" src={url}/> : <audio controls src={url}/>)}
+    {kind && !load && <Btn onClick={() => start(true)}>Preview {file.name}</Btn>}
+    <button className="text-btn" onClick={() => saveFile(api,file.id,file.name).catch(e => setError(e.message))}>{file.name}</button>
+    <ErrorText error={error}/>
+  </div>;
+}
+function MessageMedia({api,channel,message}) {
+  const files = useLoad(() => api.command('file.list',{scope:{kind:'channel',container:channel,item:message.id}}),
+    [api,channel,message.id,message.mediaVersion]);
+  return <>{(files.data?.items || []).map(file => <Preview key={file.id} {...{api,file}}/>)}
+    {files.loading && <small>Loading attachment…</small>}<ErrorText error={files.error}/></>;
+}
 function Feed({ api, ch, me, members, tell, configure, presence }) {
   const [recent, setRecent] = useState([]),
     [older, setOlder] = useState([]),
@@ -181,11 +211,13 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
     [choice, setChoice] = useState(0),
     [reply, to] = useState(null),
     [file, attach] = useState(null),
+    [deleting,confirmDelete] = useState(null),
     [media, showMedia] = useState(''),
     [pinned, onlyPins] = useState(false),
     [progress, setProgress] = useState(0),
     job = useJob();
   const stream = useRef(null), follow = useRef(true), composer = useRef(null);
+  useEffect(() => {composer.current?.focus();}, [ch.id]);
   const query = caret < 0 ? null : body.slice(0, caret).match(/(?:^|\s)@([^@\s]*)$/u);
   const candidates = query ? members.filter(m => channelAllows(ch, m) &&
     m.name.toLowerCase().includes(query[1].toLowerCase())).slice(0, 8) : [];
@@ -231,6 +263,14 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
       { pinned, limit: pinLimit },
     );
   }, [api, ch.id, pinned, pinLimit]);
+  const olderIds=older.map(m => m.id).join(',');
+  useEffect(() => {
+    if(!olderIds)return;
+    const offs=olderIds.split(',').map(id => api.watchMessage(ch.id,id,message => {
+      setOlder(xs => message ? xs.map(x => x.id === id ? message : x) : xs.filter(x => x.id !== id));
+    },e => {setOlder([]);tell(e);}));
+    return () => offs.forEach(off => off());
+  },[api,ch.id,olderIds]);
   const all = [
       ...new Map(
         [...(pinned ? [] : older), ...recent].map((m) => [m.id, m]),
@@ -257,7 +297,7 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
       setCaret(-1);
       to(null);
       if (file) {
-        showMedia(key);
+
         await api.upload(
           { kind: 'channel', container: ch.id, item: key },
           file,
@@ -326,12 +366,13 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
                   <small>{new Date(m.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})}</small>
                   {m.pinned && <Pin size={13} />}
                 </div>
+                {m.deleted ? <p className="deleted-post">Message deleted</p> : <>
                 {m.reply && (
                   <button
                     className="quoted"
                     onClick={() =>
                       command('message', { id: m.reply }).then(
-                        (x) => x && tell(x.body || 'Attachment'),
+                        (x) => x && tell(x.deleted ? 'Message deleted' : x.body || 'Attachment'),
                       )
                     }
                   >
@@ -341,7 +382,7 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
                   </button>
                 )}
                 {m.body && <MessageBody message={m} members={members} />}
-                {m.hasMedia && <Btn kind="compact" icon={Paperclip} onClick={() => showMedia(media === m.id ? '' : m.id)}>View attachment</Btn>}
+                {m.hasMedia && <MessageMedia api={api} channel={ch.id} message={m}/>}
                 {(m.mentions || []).filter(k => !m.body?.includes('@' + members.find(p => p.id === k)?.name)).map((k) => (
                   <span className="chip type-design" key={k}>
                     @{members.find((p) => p.id === k)?.name}
@@ -380,6 +421,7 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
                     label="Message attachments"
                     onClick={() => showMedia(media === m.id ? '' : m.id)}
                   />
+                  {(m.by === me.id || isAdmin(me)) && <IconButton icon={Trash2} label="Delete message for everyone" onClick={() => confirmDelete(m.id)}/>}
                   {can('pin') && (
                     <IconButton
                       icon={Pin}
@@ -397,6 +439,7 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
                     canAdd={m.by === me?.id && can('post')}
                   />
                 )}
+                </>}
               </article></React.Fragment>
             );
           })}
@@ -461,6 +504,11 @@ function Feed({ api, ch, me, members, tell, configure, presence }) {
 
         </div>
       )}
+      {deleting && <Modal title="Delete this message for everyone?" onClose={() => confirmDelete(null)}>
+        <footer><Btn onClick={() => confirmDelete(null)}>Cancel</Btn><Btn disabled={job.busy} onClick={() => job.run(async () => {
+          await api.command('channel.delete',{channel:ch.id,id:deleting});
+          setOlder(xs => xs.map(x => x.id === deleting ? {id:x.id,at:x.at,by:x.by,deleted:true} : x));confirmDelete(null);
+        })}>Delete message</Btn></footer><ErrorText error={job.error}/></Modal>}
       <ErrorText error={job.error} />
     </div>
   );
@@ -470,16 +518,28 @@ export default function Channels({
   me,
   members,
   selected,
+  showing,
   onSelect,
   tell,
 }) {
-  const channels = useLoad(() => api.command('channel.list'), [api]),
+  const [list,setList]=useState([]), [listError,listFailed]=useState(''),
+    [generation,refresh]=useState(0),
     [edit, setEdit] = useState(null),
     [presence, setPresence] = useState({}),
     [direct, setDirect] = useState(null),
     [query, search] = useState(''),
     job = useJob();
-  const list = channels.data || [];
+  useEffect(() => {
+    let live=true, sequence=0;
+    const reload=async () => {
+      const request=++sequence;
+      try {const result=await api.command('channel.list');if(live && sequence === request){setList(result);listFailed('');}}
+      catch(e){if(live && sequence === request)listFailed(e.message);}
+    };
+    reload();
+    window.addEventListener('focus',reload);
+    return () => {live=false;window.removeEventListener('focus',reload);};
+  },[api,generation,selected]);
   const raw = list.find(c => c.id === selected) || (direct?.id === selected ? direct : null) || list.find(c => c.kind !== 'direct');
   const peerId = raw?.kind === 'direct' ? Object.keys(raw.users).find(uid => uid !== me?.id) : '';
   const ch = peerId ? { ...raw, name: members.find(m => m.id === peerId)?.name || 'Teammate' } : raw;
@@ -494,28 +554,57 @@ export default function Channels({
       onSelect(c.id);
     });
   }
-  return (
-    <div className="chat-page">
-      <div className="channel-layout">
-        <aside className="channel-nav">
-          <div className="section-line"><h1>Chat</h1>
-          {isAdmin(me) && <IconButton icon={Plus} label="New channel" onClick={() => setEdit({})} />}</div>
-          <input type="search" aria-label="Find channels or people" placeholder="Find channels or people" value={query} onChange={e => search(e.target.value)} />
-          <h4>Channels</h4>
-          {visible.map(c => <button key={c.id} className={ch?.id === c.id ? 'on' : ''} onClick={() => onSelect(c.id)}>
-            {c.kind === 'announcement' ? <Megaphone size={16} /> : <Hash size={16} />}{c.name}</button>)}
-          {!visible.length && !channels.loading && <small>No channels found</small>}
-          <h4>Direct messages</h4>
-          {people.map(m => <button key={m.id} className={'teammate ' + (peerId === m.id ? 'on' : '')}
-            disabled={job.busy} onClick={() => openDirect(m.id)}>
-            <PersonIcon person={m} state={presence[m.id]} /><span>{m.name}<small>{presence[m.id] || 'Offline'}</small></span></button>)}
-          {!people.length && <small>No teammates found</small>}
-          <ErrorText error={channels.error || job.error} />
-        </aside>
-        {ch ? <Feed key={ch.id} {...{ api, ch, me, members, tell, presence }}
-          configure={isAdmin(me) && !peerId ? () => setEdit(ch) : null} /> :
-          <Empty>{channels.loading ? 'Loading conversations…' : 'Choose a channel or teammate to start a conversation.'}</Empty>}
-      </div>
+  const [expanded,expand] = useState(false), [ordering,reorder] = useState(false);
+  const storageKey = 'monexus.conversations.' + me.id;
+  const [order,setOrder] = useState(() => {try{return JSON.parse(localStorage.getItem(storageKey)) || {};}catch{return {};}});
+  const [orderReady,ready]=useState(false), writes=useRef(Promise.resolve());
+  useEffect(() => {
+    let live=true;
+    api.command('conversations.order').then(remote => {
+      if(live && Object.keys(remote).length) {setOrder(remote);localStorage.setItem(storageKey,JSON.stringify(remote));}
+    }).catch(tell).finally(() => {if(live)ready(true);});
+    return () => {live=false;};
+  },[api,storageKey]);
+  const sorted = (items,group) => {
+    const ids=order[group] || [];
+    const rank=id => ids.includes(id) ? ids.indexOf(id) : Number.MAX_SAFE_INTEGER;
+    return [...items].sort((a,b) => rank(a.id)-rank(b.id));
+  };
+  function shift(items,group,index,offset) {
+    const ids=items.map(x => x.id), target=index+offset;
+    if(target<0 || target>=ids.length)return;
+    [ids[index],ids[target]]=[ids[target],ids[index]];
+    const next={...order,[group]:ids}; localStorage.setItem(storageKey,JSON.stringify(next)); setOrder(next);
+    writes.current=writes.current.then(() => api.command('conversations.arrange',{group,ids})).catch(tell);
+  }
+  useEffect(() => {if(showing)expand(true);},[showing]);
+  const rail=document.getElementById('conversation-navigation');
+  const groupList=(items,group,dm) => {
+    const rows=sorted(items,group);
+    return <><h4>{group}</h4>{rows.map((item,i) => <div className="conversation-row" key={item.id}>
+      <button className={'nav-item sub '+(showing && (dm ? peerId === item.id : ch?.id === item.id) ? 'selected' : '')}
+        disabled={dm && job.busy} onClick={() => dm ? openDirect(item.id) : onSelect(item.id)}>
+        {dm ? <PersonIcon person={item} state={presence[item.id]}/> : item.kind === 'announcement' ? <Megaphone/> : <Hash/>}
+        <span>{item.name}</span></button>
+      {ordering && !query && <><IconButton icon={ArrowUp} label={'Move '+item.name+' up'} disabled={!i} onClick={() => shift(rows,group,i,-1)}/>
+        <IconButton icon={ArrowDown} label={'Move '+item.name+' down'} disabled={i === rows.length-1} onClick={() => shift(rows,group,i,1)}/></>}
+    </div>)}</>;
+  };
+  return (<>
+    {rail && createPortal(<><div className="conversation-heading">
+      <button className={'nav-item '+(showing ? 'selected' : '')} aria-expanded={expanded} onClick={() => {expand(!expanded);if(!expanded)refresh(n => n+1);}}>
+        <MessagesSquare/>Channels{expanded ? <ChevronDown/> : <ChevronRight/>}</button>
+      {isAdmin(me) && <IconButton icon={Plus} label="New channel" onClick={() => setEdit({})}/>}
+      </div>{expanded && <div className="conversation-list">
+        <input type="search" aria-label="Find conversations" placeholder="Find a conversation" value={query} onChange={e => search(e.target.value)}/>
+        {groupList(visible,'Channels',false)}{groupList(people,'Direct messages',true)}
+        <button disabled={!orderReady} className="rail-order" onClick={() => {search('');reorder(!ordering);}}>{ordering ? 'Done arranging' : 'Arrange conversations'}</button>
+        <ErrorText error={listError || job.error}/>
+      </div>}</>,rail)}
+    {showing && <div className="chat-page"><div className="channel-layout conversation-only">
+      {ch ? <Feed key={ch.id} {...{api,ch,me,members,tell,presence}}
+        configure={isAdmin(me) && !peerId ? () => setEdit(ch) : null}/> : <Empty>Choose a channel or teammate in the sidebar.</Empty>}
+    </div></div>}
       {edit && (
         <ChannelSettings
           {...{ api, members }}
@@ -523,11 +612,11 @@ export default function Channels({
           onClose={() => setEdit(null)}
           saved={(id) => {
             setEdit(null);
-            channels.refresh();
+            refresh(n => n + 1);
             onSelect(id);
           }}
         />
       )}
-    </div>
+    </>
   );
 }

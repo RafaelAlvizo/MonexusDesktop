@@ -65,7 +65,7 @@ export default function Preferences({
 
   signOut,
 }) {
-  const [section, choose] = useState('Profile'), [p, set] = useState({ ...prefs }),
+  const [section, choose] = useState('Profile'), [p, set] = useState({ ...prefs, presence:prefs.presence === 'Idle' ? 'Online' : prefs.presence }),
     [name, setName] = useState(me?.name || ''),
     job = useJob(),
     patch = (o) => set({ ...p, ...o });
@@ -109,6 +109,11 @@ export default function Preferences({
               {presenceStates.map((s) => (
                 <option key={s} value={s}>{s === 'system' ? 'Match Windows' : s.charAt(0).toUpperCase() + s.slice(1)}</option>
               ))}
+            </select>
+          </Label>
+          <Label name="Workspace colors">
+            <select value={p.palette || 'forest'} onChange={e => patch({palette:e.target.value})}>
+              {['forest','ocean','plum','slate'].map(color => <option key={color} value={color}>{color[0].toUpperCase() + color.slice(1)}</option>)}
             </select>
           </Label>
           <Label name="Theme">

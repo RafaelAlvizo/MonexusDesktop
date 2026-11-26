@@ -1,3 +1,4 @@
+import {Roles} from './Sharing.jsx';
 import React, { useState } from 'react';
 import { Plus, Settings2, Trash2, ShieldCheck } from 'lucide-react';
 import { events, eventNames } from '../../functions/core/model.mjs';
@@ -196,6 +197,7 @@ export default function Admin({ api, me, members, tell, navigate }) {
       <Tabs
         values={[
           'Members',
+          'Team roles',
           'Access controls',
           'Notification policy',
           'GitHub',
@@ -227,7 +229,7 @@ export default function Admin({ api, me, members, tell, navigate }) {
                 )}
             </div>
           ))
-        ) : tab === 'Access controls' ? (
+        ) : tab === 'Team roles' ? <Roles {...{api,members}}/> : tab === 'Access controls' ? (
           [
             [
               'directory',

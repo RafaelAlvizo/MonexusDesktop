@@ -6,6 +6,7 @@ import {
   MessagesSquare,
   Inbox,
   BookOpen,
+  NotebookPen,
   FolderClosed,
   Link2,
   KeyRound,
@@ -42,6 +43,7 @@ import Board from './views/Board.jsx';
 import Directory from './views/Directory.jsx';
 const Admin = lazy(() => import('./views/Admin.jsx')),
   Channels = lazy(() => import('./views/Channels.jsx')),
+  Notes = lazy(() => import('./views/Notes.jsx')),
   Resources = lazy(() => import('./views/Resources.jsx')),
   Preferences = lazy(() => import('./views/Preferences.jsx')),
   Vault = lazy(() => import('./views/Vault.jsx')),
@@ -51,6 +53,7 @@ const nav = [
   ['channels', 'Channels', MessagesSquare],
   ['inbox', 'Inbox', Inbox],
   ['docs', 'Documentation', BookOpen],
+  ['notes', 'Notes', NotebookPen],
   ['drive', 'Drive', FolderClosed],
   ['links', 'Apps & links', Link2],
   ['vault', 'Sensitive data', KeyRound],
@@ -160,13 +163,14 @@ function App() {
     mounted = useRef(true),
     restore = useRef(0);
   const tell = (msg) => {
-    setNotice(typeof msg === 'string' ? msg : humanError(msg));
+    setNotice(msg?.kind === 'workspace_banner' || typeof msg === 'string' ? msg : humanError(msg));
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setNotice(''), 6000);
   };
   const connect = (next) => {
     restore.current++;
     localStorage.setItem('monexus.live', '1');
+    setChannelId('');
     setSpace({ members: [], boards: [] });
     selectBoard('');
     setView('boards');
@@ -176,6 +180,7 @@ function App() {
   const leave = () => {
     restore.current++;
     localStorage.removeItem('monexus.live');
+    setChannelId('');
     setSpace({ members: [], boards: [] });
     setApi(null);
     setPrefs(defaultPrefs);
@@ -236,11 +241,12 @@ function App() {
     board = boards.find((b) => b.id === activeBoard) || boards[0];
   useEffect(() => {
     document.documentElement.dataset.theme = prefs.theme;
-  }, [prefs.theme]);
+    document.documentElement.dataset.palette = prefs.palette || 'forest';
+  }, [prefs.theme,prefs.palette]);
   useEffect(() => {
     if (!desktop) return;
     const event = (e) => {
-      if (typeof e.data === 'string') tell(e.data);
+      if (typeof e.data === 'string' || e.data?.kind === 'workspace_banner') tell(e.data);
     };
     desktop.addEventListener('message', event);
     return () => desktop.removeEventListener('message', event);
@@ -269,7 +275,7 @@ function App() {
           });
           return;
         }
-        if (e.banner && p.banners) tell(e.title + ' · ' + e.body);
+        if (e.banner && p.banners) tell({kind:'workspace_banner',title:e.title,body:e.body});
         if (e.sound && p.sound) {
           try {
             const ctx = new AudioContext(),
@@ -326,7 +332,7 @@ function App() {
       <p>Sign in with your work email to open your team’s workspace.</p>
       <div className="row"><Btn kind="primary" icon={LogIn} onClick={() => authDialog(true)}>Sign in</Btn>
       {desktop && <Btn icon={Download} onClick={() => nativeAction('update')}>Update</Btn>}</div>
-      {notice && <p role="status">{notice}</p>}</section>
+      {notice && <p role="status">{notice?.title || notice}</p>}</section>
       {showAuth && <SignIn onClose={() => authDialog(false)} connect={connect} />}
     </main> : !me ? <main className="welcome"><p role="status">Opening your workspace…</p></main> : <div className="shell">
       <aside className={'sidebar ' + (rail ? 'expanded' : '')}>
@@ -336,7 +342,7 @@ function App() {
         </div>
         <div className="nav-group">
           <div className="nav-label">Workspace</div>
-          {nav.slice(0, 3).map(([k, n, I]) => (
+          {nav.slice(0, 3).map(([k, n, I]) => k === 'channels' ? <div key={k} id="conversation-navigation"/> : (
             <button
               className={
                 'nav-item ' +
@@ -471,20 +477,18 @@ function App() {
             />
           ) : view === 'admin' && isAdmin(me) ? (
             <Admin {...shared} navigate={go} />
-          ) : view === 'channels' ? (
-            <Channels
-              {...shared}
-              selected={channelId}
-              onSelect={setChannelId}
-            />
           ) : view === 'inbox' ? (
             <InboxPage {...shared} open={openNotice} />
+          ) : view === 'notes' ? (
+            <Notes {...shared} />
           ) : view === 'vault' ? (
             <Vault {...shared} />
           ) : ['docs', 'drive', 'links'].includes(view) ? (
             <Resources key={view} {...shared} area={view} />
           ) : null}
         </Suspense>
+        <Suspense fallback={null}><Channels key={api.uid} {...shared} showing={view === 'channels'} selected={channelId}
+          onSelect={id => {setChannelId(id);go('channels');}}/></Suspense>
       </main>
       {showAuth && (
         <SignIn onClose={() => authDialog(false)} connect={connect} />
@@ -502,7 +506,7 @@ function App() {
                   : '#3b916f',
           }}
         >
-          {notice}
+          {notice.kind === 'workspace_banner' ? <div className="notice-message"><strong>{notice.title}</strong><p>{notice.body}</p></div> : notice}
           <button
             onClick={() => setNotice('')}
             aria-label="Dismiss notification"

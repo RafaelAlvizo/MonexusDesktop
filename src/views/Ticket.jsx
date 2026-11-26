@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus,
   Link2,
@@ -216,7 +216,7 @@ function HistoryList({ api, board, t, members }) {
 export default function Ticket({
   api,
   board,
-  initial: t,
+  initial,
   column,
   members,
   me,
@@ -225,6 +225,7 @@ export default function Ticket({
   onClose,
   tell,
 }) {
+  const [t, setTicket] = useState(initial), [saveState, setSaveState] = useState(initial ? 'Saved' : 'Enter a title to start');
   const [tab, setTab] = useState('Details'),
     [vals, setVals] = useState({ ...t?.values }),
     [status, move] = useState(t?.column || column),
@@ -241,35 +242,57 @@ export default function Ticket({
     );
   const [parentNumber, setParentNumber] = useState(''),
     [foundParent, setFoundParent] = useState(null);
-  const save = () =>
-    job.run(async () => {
-      const key = t?.id || newId('t'),
-        changed = Object.fromEntries(
-          Object.entries(vals).filter(
-            ([k, v]) => JSON.stringify(t?.values[k]) !== JSON.stringify(v),
-          ),
-        );
-      await api.command('ticket.save', {
-        id: key,
-        board: board.id,
-        rev: t?.rev ?? null,
-        column: status,
-        values: changed,
-        links,
-        parent,
-      });
-      tell(t ? 'Ticket saved.' : 'Ticket created.');
-      onOpen(
-        await api.command('ticket.detail', { board: board.id, ticket: key }),
-      );
-      if (t) onClose();
-    });
+  const identity = useRef(initial?.id || newId('t'));
+  const saved = useRef(initial);
+  const queue = useRef(Promise.resolve());
+  const draft = {values:vals,column:status,parent,links};
+  const signature = JSON.stringify(draft);
+  const latest = useRef(draft);
+  latest.current = draft;
+  const persisted = useRef(signature);
+  const [saveError, setSaveError] = useState('');
+  function flush() {
+    const write = async () => {
+      const current = latest.current, key = JSON.stringify(current);
+      if (persisted.current === key) return;
+      const missing = board.fields.find(f => f.enabled && f.required && empty(current.values[f.key]));
+      if (missing) throw Error('Enter ' + missing.label + ' to save this ticket.');
+      const prior = saved.current;
+      const values = Object.fromEntries(Object.entries(current.values).filter(([field,value]) =>
+        JSON.stringify(value) !== JSON.stringify(prior?.values[field])));
+      setSaveState('Saving…');
+      const result = await api.command('ticket.save', { ...current, values, board:board.id,
+        id:identity.current, rev:prior?.rev ?? null, returnTicket:true });
+      saved.current = typeof result === 'string' ? await api.command('ticket.detail',{board:board.id,ticket:result}) : result;
+      persisted.current = key;
+      setTicket(saved.current);
+      setSaveError('');
+      setSaveState('Saved');
+    };
+    const work = queue.current.catch(() => {}).then(write);
+    queue.current = work;
+    return work;
+  }
+  function failed(e) {setSaveError(e.message); setSaveState('Unsaved changes');}
+  useEffect(() => {
+    if (persisted.current === signature) return;
+    setSaveError('');
+    setSaveState('Unsaved changes');
+    const timer = setTimeout(() => flush().catch(failed), 700);
+    return () => clearTimeout(timer);
+  }, [signature]);
+  const close = async () => {
+    try {
+      do { await flush(); } while (persisted.current !== JSON.stringify(latest.current));
+      onClose();
+    } catch(e) {failed(e);}
+  };
   return (
     <Modal
       wide
       title={t ? t.values.title : 'New ticket'}
       subtitle={t ? ticketKey(board, t) + '  /  ' + board.name : board.name}
-      onClose={onClose}
+      onClose={close}
     >
       {t && (
         <Tabs
@@ -380,14 +403,15 @@ export default function Ticket({
             {parent && board.features.parents && (
               <Btn
                 onClick={() =>
-                  job.run(async () =>
+                  job.run(async () => {
+                    await flush();
                     onOpen(
                       await api.command('ticket.detail', {
                         board: board.id,
                         ticket: parent,
                       }),
-                    ),
-                  )
+                    );
+                  })
                 }
               >
                 Open parent ticket
@@ -470,7 +494,7 @@ export default function Ticket({
                   canAdd={canAttach}
                 />
               ) : (
-                <p className="muted">Save the ticket to attach media.</p>
+                <p className="muted">Attachments become available when the required fields are filled in.</p>
               ))}
             {t && (
               <div className="audit-line">
@@ -492,16 +516,10 @@ export default function Ticket({
         <ErrorText error={job.error} />
       </div>
       <footer>
-        <Btn onClick={onClose}>Close</Btn>
-        {tab === 'Details' && (canEdit || canMove) && (
-          <Btn
-            kind="primary"
-            onClick={save}
-            disabled={job.busy || empty(vals.title)}
-          >
-            {t ? 'Save changes' : 'Create ticket'}
-          </Btn>
-        )}
+        <div className="grow" role="status">{saveError || saveState}</div>
+        {saveError && <><Btn onClick={() => flush().catch(failed)}>Retry</Btn>
+          <Btn onClick={onClose}>Discard unsaved changes</Btn></>}
+        <Btn kind="primary" onClick={close}>Done</Btn>
       </footer>
     </Modal>
   );

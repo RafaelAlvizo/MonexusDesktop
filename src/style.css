@@ -1430,3 +1430,57 @@ details > .form-grid {
 .mention-results button[aria-selected=true],.mention-results button:hover {background:var(--tint);}
 .mention-results small {color:var(--dim); margin-left:auto;}
 .channel-nav .on {font-weight:630;}
+
+/* Personal workspace colors use the current light or dark color scheme. */
+:root[data-palette=ocean] {--brand:#22567e;--brand-dark:#152f4c;--brand-bright:#92d3f5}
+:root[data-palette=plum] {--brand:#664279;--brand-dark:#352440;--brand-bright:#e7bafa}
+:root[data-palette=slate] {--brand:#465a71;--brand-dark:#253142;--brand-bright:#b9d5f2}
+:root:is([data-palette=ocean],[data-palette=plum],[data-palette=slate]) {
+  --accent:light-dark(var(--brand),var(--brand-bright));
+  --tint:light-dark(color-mix(in srgb,var(--brand) 12%,white),color-mix(in srgb,var(--brand) 45%,#182026));
+  --hover:light-dark(color-mix(in srgb,var(--brand) 8%,white),color-mix(in srgb,var(--brand) 30%,#192026));
+  --bg:light-dark(color-mix(in srgb,var(--brand) 4%,white),color-mix(in srgb,var(--brand) 15%,#14171c));
+  --lane:light-dark(color-mix(in srgb,var(--brand) 7%,white),color-mix(in srgb,var(--brand) 20%,#191d23));
+  --paper:light-dark(#fff,color-mix(in srgb,var(--brand) 18%,#1d2228));
+}
+[data-palette] .sidebar{background:var(--brand-dark,#18372f);overflow-y:auto}
+[data-palette] .btn.primary {background:var(--brand,#285b47);color:white}
+[data-palette] .sidebar .nav-item.selected{background:var(--brand,#33584a)}
+.conversation-heading,.conversation-row{display:flex;align-items:center;gap:2px}
+.conversation-heading>.nav-item,.conversation-row>.nav-item {flex:1;min-width:0}
+.conversation-heading .nav-item svg:last-child {margin-left:auto;width:13px}
+.conversation-list {margin:5px 0 12px 8px;padding-left:6px;border-left:1px solid #ffffff30}
+.conversation-list input {width:100%;background:#ffffff12;border:1px solid #ffffff42;color:white}
+.conversation-list input::placeholder {color:#d1dad8}
+.conversation-list h4 {margin:14px 7px 3px;color:#c1d4ce;font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.conversation-row>.nav-item {height:auto;padding:6px 8px}
+.conversation-row .nav-item span:last-child {overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conversation-heading .icon-btn,.conversation-row .icon-btn,.rail-order {color:#e0ebe5}
+.rail-order {font-size:11px;padding:7px}
+.chat-page .channel-layout.conversation-only {grid-template-columns:minmax(0,1fr)}
+.chat-preview {margin:6px 0 6px 32px;display:grid;justify-items:start;gap:4px}
+.chat-preview img,.chat-preview video {max-width:min(100%,480px);max-height:340px;object-fit:contain;border:1px solid var(--line);border-radius:10px}
+.chat-message .deleted-post{background:transparent;color:var(--dim);font-style:italic}
+.toast {width:min(430px,calc(100vw - 32px));max-width:430px;max-height:40vh;overflow:auto;padding:16px 20px;font-size:15px;line-height:1.5;background:var(--paper);color:var(--ink);box-shadow:0 10px 32px #0003;white-space:pre-wrap;overflow-wrap:anywhere}
+.filter-row {flex-wrap:wrap}
+.notes-layout {display:grid;grid-template-columns:minmax(230px,32%) minmax(0,1fr);gap:16px;align-items:start}
+.note-row {display:grid;text-align:left;gap:5px;padding:12px;border-radius:8px}
+.note-row.current {background:var(--tint)}
+.note-row small,.note-row span {font-size:11px;color:var(--dim)}
+.note-row span {display:inline-flex;gap:5px;align-items:center}
+.note-reader {min-height:320px;padding:26px}
+.note-reader p,.secret {white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}
+.note-reader h2 {margin:18px 0}
+.choice-list {border:1px solid var(--line);border-radius:8px;display:flex;gap:5px 14px;flex-wrap:wrap;padding:10px;margin:8px 0}
+.choice-list legend {color:var(--dim);padding:0 4px}
+.share-options summary {font-weight:600;cursor:pointer;padding:6px 0}
+.vault-image {max-width:100%;max-height:65vh;object-fit:contain}
+.folder-path {display:flex;gap:4px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line)}
+.folder-path button{color:var(--accent)}
+@media(max-width:760px){.notes-layout{grid-template-columns:1fr}}
+
+.toast {width:min(470px,calc(100vw - 32px));max-width:470px;align-items:flex-start}
+.toast button {margin-left:auto;flex:none}
+.notice-message {min-width:0}
+.notice-message strong {color:var(--accent)}
+.notice-message p {margin:5px 0 0}
