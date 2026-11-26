@@ -1,14 +1,16 @@
-import {Access,FolderPicker} from './Sharing.jsx';
+import FileBrowser from './FileBrowser.jsx';
+import {
+  Permissions,
+  MoveItem,
+  ViewAccess,
+  accessSummary,
+} from './Sharing.jsx';
 import React, { useState } from 'react';
 import {
   Plus,
   Folder,
-  FileText,
   Link2,
-  Download,
   Settings2,
-  Search,
-  ChevronRight,
   ExternalLink,
   Trash2,
 } from 'lucide-react';
@@ -18,7 +20,6 @@ import {
   IconButton,
   Modal,
   Label,
-  Check,
   Tabs,
   Empty,
   ErrorText,
@@ -39,6 +40,7 @@ function Editor({
   saved,
   onClose,
   canManage,
+  kind,
 }) {
   const [v, set] = useState(
       () =>
@@ -49,7 +51,7 @@ function Editor({
           description: '',
           area,
           folder,
-          kind: area === 'drive' ? (canManage ? 'folder' : 'file') : 'link',
+          kind: kind || 'link',
           category: '',
           tags: '',
           acl: { everyone: true, roles: [], users: [], exclude: [] },
@@ -88,36 +90,36 @@ function Editor({
     <Modal
       title={
         initial
-          ? 'Edit ' + (area === 'links' ? 'link' : 'resource')
-          : 'Add ' + (area === 'links' ? 'link' : 'resource')
+          ? 'Edit details'
+          : v.kind === 'folder'
+            ? 'New folder'
+            : v.kind === 'file'
+              ? 'Upload file'
+              : 'New link'
       }
-      onClose={onClose}
+      onClose={() => {
+        if (!job.busy) onClose();
+      }}
     >
       <div className="form-body scroll">
-        <Label name="Name">
+        {v.kind === 'file' && !v.ready && (
+          <Label name="Choose a file">
+            <input
+              type="file"
+              onChange={(e) => {
+                const f = e.target.files[0];
+                choose(f);
+                if (f && !v.name) patch({ name: f.name });
+              }}
+            />
+          </Label>
+        )}
+        <Label name={v.kind === 'folder' ? 'Folder name' : 'Name'}>
           <input
             value={v.name}
             onChange={(e) => patch({ name: e.target.value })}
           />
         </Label>
-        {area !== 'links' && (
-          <Label name="Resource type">
-            <select
-              disabled={!!initial || !!pending || !canManage}
-              value={v.kind}
-              onChange={(e) => patch({ kind: e.target.value })}
-            >
-              {(area === 'drive'
-                ? ['folder', 'file', 'link']
-                : ['link', 'file', 'folder']
-              ).map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-          </Label>
-        )}
         {(area === 'links' || v.kind === 'link') && (
           <Label name="Address">
             <input
@@ -137,60 +139,29 @@ function Editor({
           </Label>
         ) : (
           <>
-            {v.kind === 'file' && !v.ready && (
-              <Label name="File">
-                <input
-                  type="file"
-                  onChange={(e) => {
-                    const f = e.target.files[0];
-                    choose(f);
-                    if (f && !v.name) patch({ name: f.name });
-                  }}
-                />
-              </Label>
+            {canManage && !initial && (
+              <details>
+                <summary>Permissions · {accessSummary(v, api.uid)}</summary>
+                <ViewAccess {...{ api, members }} value={v} change={patch} />
+              </details>
             )}
-            <div className="form-grid">
-              <Label name="Category">
-                <input
-                  value={v.category}
-                  onChange={(e) => patch({ category: e.target.value })}
-                />
-              </Label>
-              <Label name="Tags">
-                <input
-                  value={v.tags}
-                  onChange={(e) => patch({ tags: e.target.value })}
-                />
-              </Label>
-            </div>
-            {canManage && initial && <><FolderPicker {...{api,area}} action="library.list" current={v.folder} exclude={v.id}
-              change={(folder,location) => patch({folder,location})}/>{v.location && <small>Location · {v.location}</small>}</>}
-            {canManage && v.folder && <Check checked={!!v.independent}
-              onChange={e => patch({independent:e.target.checked,...(e.target.checked && v.acl.everyone ? {acl:{...v.acl,everyone:false}} : {})})}>
-              Set independent access so selected people can open this item without its parent folder
-            </Check>}
-            {canManage && (
-              <Access
-                {...{ api, members }}
-                acl={v.acl}
-                set={(acl) => patch({ acl })}
-              />
-            )}{' '}
-            {canManage && area === 'drive' && v.kind === 'folder' && (
-              <Access
-                {...{ api, members }}
-                title="Who can upload here"
-                acl={
-                  v.uploadAcl || {
-                    everyone: false,
-                    roles: [],
-                    users: [],
-                    exclude: [],
-                  }
-                }
-                set={(uploadAcl) => patch({ uploadAcl })}
-              />
-            )}
+            <details>
+              <summary>Category and tags</summary>
+              <div className="form-grid">
+                <Label name="Category">
+                  <input
+                    value={v.category}
+                    onChange={(e) => patch({ category: e.target.value })}
+                  />
+                </Label>
+                <Label name="Tags">
+                  <input
+                    value={v.tags}
+                    onChange={(e) => patch({ tags: e.target.value })}
+                  />
+                </Label>
+              </div>
+            </details>
           </>
         )}
         {job.busy && file && (
@@ -215,8 +186,18 @@ function Editor({
         <Btn onClick={onClose} disabled={job.busy}>
           Close
         </Btn>
-        <Btn kind="primary" disabled={job.busy} onClick={submit}>
-          Save
+        <Btn
+          kind="primary"
+          disabled={job.busy || !v.name.trim()}
+          onClick={submit}
+        >
+          {initial
+            ? 'Save changes'
+            : v.kind === 'file'
+              ? 'Upload file'
+              : v.kind === 'folder'
+                ? 'Create folder'
+                : 'Save link'}
         </Btn>
       </footer>
     </Modal>
@@ -226,7 +207,9 @@ export default function Resources({ api, me, members, area }) {
   const [scope, setScope] = useState('company'),
     [folders, path] = useState([]),
     [search, find] = useState(''),
-    [query, apply] = useState(''),
+    [kind, setKind] = useState('link'),
+    [permission, setPermission] = useState(null),
+    [moving, setMoving] = useState(null),
     [editing, edit] = useState(undefined),
     [remove, confirm] = useState(null),
     job = useJob();
@@ -235,149 +218,158 @@ export default function Resources({ api, me, members, area }) {
     page = usePages(
       api,
       links ? 'links.list' : 'library.list',
-      links ? { scope } : { area, folder, search: query },
+      links ? { scope } : { area, folder },
     ),
     canEdit = isAdmin(me) || (links && scope === 'personal'),
     canUpload = area === 'drive' && aclAllows(folders.at(-1)?.uploadAcl, me);
+  const create = (k) => {
+    setKind(k);
+    edit(null);
+  };
+  const finish = () => {
+    edit(undefined);
+    setPermission(null);
+    setMoving(null);
+    page.refresh();
+  };
+  if (!links)
+    return (
+      <div className="page files-page">
+        <div className="page-head">
+          <h1>{names[area]}</h1>
+        </div>
+        <FileBrowser
+          name={names[area]}
+          uid={me.id}
+          path={folders}
+          navigate={(p) => {
+            path(p);
+            find('');
+          }}
+          search={search}
+          onSearch={find}
+          items={page.items}
+          page={page}
+          permissions={setPermission}
+          canManage={(n) =>
+            canEdit ||
+            (canUpload && n.by === me.id && n.kind === 'file' && !n.independent)
+          }
+          edit={canEdit ? edit : null}
+          move={canEdit ? setMoving : null}
+          open={(n) =>
+            job.run(async () => {
+              if (n.kind === 'folder') {
+                path([...folders, n]);
+                find('');
+              } else if (n.kind === 'link') await openLink(n.url);
+              else if (n.ready) await saveFile(api, n.file, n.name);
+              else edit(n);
+            })
+          }
+          tools={
+            <>
+              {(canEdit || canUpload) && (
+                <Btn kind="primary" icon={Plus} onClick={() => create('file')}>
+                  Upload file
+                </Btn>
+              )}
+              {canEdit && (
+                <>
+                  <Btn icon={Folder} onClick={() => create('folder')}>
+                    New folder
+                  </Btn>
+                  <Btn icon={Link2} onClick={() => create('link')}>
+                    New link
+                  </Btn>
+                </>
+              )}
+            </>
+          }
+        />
+        <ErrorText error={job.error} />
+        {editing !== undefined && (
+          <Editor
+            {...{ api, area, folder, scope, members, kind }}
+            initial={editing}
+            canManage={canEdit}
+            onClose={() => edit(undefined)}
+            saved={finish}
+          />
+        )}
+        {permission && (
+          <Permissions
+            {...{ api, me, members }}
+            item={permission}
+            allowIndependent={canEdit}
+            close={() => setPermission(null)}
+            saved={finish}
+          />
+        )}
+        {moving && (
+          <MoveItem
+            api={api}
+            item={moving}
+            close={() => setMoving(null)}
+            saved={finish}
+          />
+        )}
+      </div>
+    );
   return (
     <div className="page">
       <div className="page-head">
-        <div>
-          <div className="eyebrow">Resources</div>
-          <h1>{names[area]}</h1>
-        </div>
-        {(canEdit || canUpload) && (
+        <h1>Apps &amp; links</h1>
+        {canEdit && (
           <Btn kind="primary" icon={Plus} onClick={() => edit(null)}>
-            {links ? 'Add link' : canEdit ? 'Add resource' : 'Upload file'}
+            Add link
           </Btn>
         )}
       </div>
-      {links ? (
-        <Tabs
-          values={[
-            ['company', 'Company'],
-            ['personal', 'Personal'],
-          ]}
-          value={scope}
-          onChange={setScope}
-        />
-      ) : (
-        <div className="section-line">
-          <div className="row">
-            <button
-              className="text-btn"
-              onClick={() => {
-                path([]);
-                find('');
-                apply('');
-              }}
-            >
-              {names[area]}
-            </button>
-            {folders.map((f, i) => (
-              <React.Fragment key={f.id}>
-                <ChevronRight size={13} />
-                <button
-                  className="text-btn"
-                  onClick={() => path(folders.slice(0, i + 1))}
-                >
-                  {f.name}
-                </button>
-              </React.Fragment>
-            ))}
-          </div>
-          <form
-            className="row"
-            onSubmit={(e) => {
-              e.preventDefault();
-              apply(search);
-            }}
-          >
-            <label className="search">
-              <Search size={15} />
-              <input
-                aria-label="Search resources"
-                value={search}
-                placeholder="Name, category, or tag…"
-                onChange={(e) => {
-                  find(e.target.value);
-                  if (!e.target.value) apply('');
-                }}
-              />
-            </label>
-            <button className="btn">Search</button>
-          </form>
-        </div>
-      )}
+      <Tabs
+        values={[
+          ['company', 'Company'],
+          ['personal', 'Personal'],
+        ]}
+        value={scope}
+        onChange={setScope}
+      />
       <div className="panel">
-        {[...page.items].sort((a,b) => Number(b.kind === 'folder')-Number(a.kind === 'folder') || a.name.localeCompare(b.name)).map((n) => {
-          const I =
-            n.kind === 'folder' ? Folder : n.kind === 'file' ? FileText : Link2;
-          const open = () =>
-            job.run(async () => {
-              if (n.kind === 'folder') {
-                path([
-                  ...folders,
-                  { id: n.id, name: n.name, uploadAcl: n.uploadAcl },
-                ]);
-                find('');
-                apply('');
-              } else if (n.kind === 'file') {
-                if (n.ready) await saveFile(api, n.file, n.name);
-                else edit(n);
-              } else await openLink(n.url);
-            });
-          return (
-            <div className="resource-row" key={n.id}>
-              <span className="resource-icon">
-                <I size={19} />
-              </span>
-              <button className="resource-name" onClick={open}>
-                <strong>{n.name}</strong>
-                <small>
-                  {n.description ||
-                    [n.category, n.tags].filter(Boolean).join(' · ') ||
-                    n.url ||
-                    n.kind}
-                  {n.kind === 'file' && !n.ready ? ' · Awaiting upload' : ''}
-                </small>
-              </button>
-              {canEdit && (
+        {page.items.map((n) => (
+          <div className="resource-row" key={n.id}>
+            <span className="resource-icon">
+              <Link2 size={19} />
+            </span>
+            <button
+              className="resource-name"
+              onClick={() => job.run(() => openLink(n.url))}
+            >
+              <strong>{n.name}</strong>
+              <small>{n.description || n.url}</small>
+            </button>
+            {canEdit && (
+              <>
                 <IconButton
                   icon={Settings2}
                   label={'Edit ' + n.name}
                   onClick={() => edit(n)}
                 />
-              )}{' '}
-              {links && canEdit && (
                 <IconButton
                   icon={Trash2}
                   label={'Remove ' + n.name}
                   onClick={() => confirm(n)}
                 />
-              )}
-              <IconButton
-                icon={
-                  n.kind === 'file'
-                    ? Download
-                    : n.kind === 'folder'
-                      ? ChevronRight
-                      : ExternalLink
-                }
-                label={'Open ' + n.name}
-                onClick={open}
-              />
-            </div>
-          );
-        })}
+              </>
+            )}
+            <IconButton
+              icon={ExternalLink}
+              label={'Open ' + n.name}
+              onClick={() => job.run(() => openLink(n.url))}
+            />
+          </div>
+        ))}
         {!page.items.length && !page.loading && (
-          <Empty>
-            {query
-              ? 'No matching resources.'
-              : links
-                ? 'No links in this collection.'
-                : 'This folder is empty.'}
-          </Empty>
+          <Empty>No links in this collection.</Empty>
         )}
         <More page={page} />
         <ErrorText error={job.error} />

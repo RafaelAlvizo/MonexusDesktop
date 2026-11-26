@@ -47,6 +47,7 @@ export const events = [
   'announcement',
   'direct_message',
   'channel_message',
+  'eod_report',
 ];
 export const eventNames = {
   pr_opened: 'Pull request opened',
@@ -59,6 +60,7 @@ export const eventNames = {
   announcement: 'Announcement',
   direct_message: 'Direct message',
   channel_message: 'Channel message',
+  eod_report: 'End-of-day report',
 };
 export const methods = ['inbox', 'banner', 'sound'];
 export const isAdmin = (user) => ['owner', 'admin'].includes(user?.role);

@@ -27,7 +27,7 @@ export default function Inbox({ api, open }) {
               <h3>{n.title}</h3>
               <p>{n.body}</p>
             </div>
-            {(n.board || n.channel) && <Btn onClick={() => open(n)}>Open</Btn>}
+            {(n.board || n.channel || n.eodDay) && <Btn onClick={() => open(n)}>Open</Btn>}
             {!n.read && (
               <Btn
                 onClick={() =>

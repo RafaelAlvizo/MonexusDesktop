@@ -7,6 +7,7 @@ import {
   Inbox,
   BookOpen,
   NotebookPen,
+  CalendarCheck,
   FolderClosed,
   Link2,
   KeyRound,
@@ -43,6 +44,7 @@ import Board from './views/Board.jsx';
 import Directory from './views/Directory.jsx';
 const Admin = lazy(() => import('./views/Admin.jsx')),
   Channels = lazy(() => import('./views/Channels.jsx')),
+  Eod = lazy(() => import('./views/Eod.jsx')),
   Notes = lazy(() => import('./views/Notes.jsx')),
   Resources = lazy(() => import('./views/Resources.jsx')),
   Preferences = lazy(() => import('./views/Preferences.jsx')),
@@ -54,6 +56,7 @@ const nav = [
   ['inbox', 'Inbox', Inbox],
   ['docs', 'Documentation', BookOpen],
   ['notes', 'Notes', NotebookPen],
+  ['eod', 'EOD', CalendarCheck],
   ['drive', 'Drive', FolderClosed],
   ['links', 'Apps & links', Link2],
   ['vault', 'Sensitive data', KeyRound],
@@ -145,6 +148,7 @@ function SignIn({ onClose, connect }) {
   );
 }
 function App() {
+  const [eodDate,setEodDate]=useState(null);
   const [api, setApi] = useState(null),
     [space, setSpace] = useState({ members: [], boards: [] }),
     [activeBoard, selectBoard] = useState(''),
@@ -264,6 +268,7 @@ function App() {
   useEffect(
     () =>
       api?.watchAlerts((e) => {
+        if(e.eodDay)window.dispatchEvent(new Event('monexus-eod-update'));
         if (!['Online', 'Idle'].includes(presence.current)) return;
         const p = settings.current;
         if (desktop) {
@@ -294,6 +299,7 @@ function App() {
   );
   const go = (v) => {
       setView(v);
+      if(v==='eod')setEodDate({day:''});
       setRail(false);
       setJump(null);
     },
@@ -302,7 +308,8 @@ function App() {
       go('boards');
     };
   const openNotice = (n) => {
-    if (n.board) {
+    if (n.eodDay) {go('eod');setEodDate({day:n.eodDay});}
+    else if (n.board) {
       selectBoard(n.board);
       setJump(n.ticket);
       setView('boards');
@@ -487,6 +494,7 @@ function App() {
             <Resources key={view} {...shared} area={view} />
           ) : null}
         </Suspense>
+        <Suspense fallback={null}><Eod key={api.uid} {...shared} visible={view === 'eod'} requested={eodDate}/></Suspense>
         <Suspense fallback={null}><Channels key={api.uid} {...shared} showing={view === 'channels'} selected={channelId}
           onSelect={id => {setChannelId(id);go('channels');}}/></Suspense>
       </main>

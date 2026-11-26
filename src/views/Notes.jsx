@@ -1,269 +1,553 @@
-import React, { useState } from 'react';
-import { NotebookPen, UsersRound, Plus } from 'lucide-react';
-import { newId } from '../../functions/core/model.mjs';
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import {
-  Btn,
-  Empty,
-  ErrorText,
-  Label,
-  Tabs,
-  Modal,
-  useJob,
-  useLoad,
-} from '../ui.jsx';
+  NotebookPen,
+  Folder,
+  FolderPlus,
+  SquarePen,
+  UsersRound,
+  Share2,
+  Search,
+  ChevronLeft,
+} from 'lucide-react';
+import { newId } from '../../functions/core/model.mjs';
+import { Btn, ErrorText, Label, Modal, useJob, useLoad } from '../ui.jsx';
 import { PeoplePicker } from './Sharing.jsx';
 
-export default function Notes({ api, me, members }) {
-  const notes = useLoad(async () => {
-    let cursor,
-      items = [];
+// Keep pending writes alive across workspace navigation, scoped to this sign-in session.
+const sessions = new WeakMap();
+function notebook(api) {
+  if (sessions.has(api)) return sessions.get(api);
+  const records = new Map(),
+    listeners = new Set();
+  let snapshot = [],
+    generation = 0;
+  function notify() {
+    snapshot = [...records.values()];
+    listeners.forEach((fn) => fn());
+  }
+  async function reload() {
+    const token = ++generation,
+      found = new Map(),
+      previous = new Map([...records].map(([id, r]) => [id, r.note.rev]));
+    let cursor = null;
     do {
-      const page = await api.command('notes.list', { cursor: cursor || null });
-      items.push(...page.items);
+      const page = await api.command('notes.list', { cursor });
+      page.items.forEach((n) => found.set(n.id, n));
       cursor = page.next;
     } while (cursor);
-    return items;
-  }, [api]);
-  const catalog = useLoad(() => api.command('notes.projects'), [api]);
-  const [newProject, setNewProject] = useState(null);
-  const [tab, chooseTab] = useState('Mine'),
-    [project, chooseProject] = useState(''),
-    [sort, chooseSort] = useState('updated'),
-    [query, search] = useState(''),
-    [selected, select] = useState(''),
-    [draft, edit] = useState(null),
-    job = useJob();
-  const mine = tab === 'Mine',
-    all = notes.data || [],
-    scope = all.filter((n) => (n.owner === me.id) === mine),
-    projects = [
-      ...new Set([
-        ...(mine ? catalog.data || [] : []),
-        ...scope.map((n) => n.project).filter(Boolean),
-      ]),
-    ].sort(),
-    list = scope
-      .filter(
-        (n) =>
-          (!project || project === n.project) &&
-          (n.title + ' ' + n.body).toLowerCase().includes(query.toLowerCase()),
+    if (token !== generation) return;
+    for (const [id, r] of records)
+      if (
+        !found.has(id) &&
+        previous.get(id) === r.note.rev &&
+        !r.dirty &&
+        !r.writing
       )
-      .sort((a, b) =>
-        sort === 'title' ? a.title.localeCompare(b.title) : b.at - a.at,
-      ),
-    note = list.find((n) => n.id === selected) || list[0];
+        records.delete(id);
+    for (const [id, n] of found) {
+      const r = records.get(id);
+      if (!r) records.set(id, { note: n });
+      else if (!r.dirty && !r.writing && n.rev >= r.note.rev) r.note = n;
+    }
+    notify();
+  }
+  async function flush(r) {
+    clearTimeout(r.timer);
+    const emptyDraft = !r.note.rev && !r.note.title.trim() && !r.note.body.trim();
+    if (r.writing || !r.dirty || emptyDraft)
+      return;
+    r.writing = true;
+    r.error = '';
+    notify();
+    try {
+      while (r.dirty) {
+        const sent = r.note;
+        const saved = await api.command('notes.save', {
+          ...sent,
+          title: sent.title.trim() || 'Untitled note',
+        });
+        if (r.note === sent) {
+          r.note = saved;
+          r.dirty = false;
+        } else r.note = { ...r.note, rev: saved.rev };
+      }
+    } catch (e) {
+      r.error = e.message;
+    } finally {
+      r.writing = false;
+      notify();
+    }
+  }
+  const book = {
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    get: () => snapshot,
+    reload,
+    add(note) {
+      records.set(note.id, { note, dirty: true });
+      notify();
+    },
+    change(id, patch) {
+      const r = records.get(id);
+      r.note = { ...r.note, ...patch, at: Date.now() };
+      r.dirty = true;
+      r.error = '';
+      clearTimeout(r.timer);
+      r.timer = setTimeout(() => flush(r), 650);
+      notify();
+    },
+    flush(id) {
+      const r = records.get(id);
+      if (r) return flush(r);
+    },
+    recover(id) {
+      const r = records.get(id);
+      const copy = {
+        ...r.note,
+        id: newId('note'),
+        title: (r.note.title || 'Untitled note') + ' (copy)',
+        shared: [],
+        rev: 0,
+      };
+      records.delete(id);
+      book.add(copy);
+      book.flush(copy.id);
+      return copy.id;
+    },
+    dropEmpty(id) {
+      const r = records.get(id);
+      if (
+        r &&
+        !r.note.rev &&
+        !r.writing &&
+        !r.note.title.trim() &&
+        !r.note.body.trim()
+      ) {
+        clearTimeout(r.timer);
+        records.delete(id);
+        notify();
+      }
+    },
+  };
+  sessions.set(api, book);
+  return book;
+}
+function ShareNote({ note, members, close, apply }) {
+  const [shared, set] = useState(note.shared),
+    [search, find] = useState('');
   return (
-    <div className="page notes-page">
-      <div className="page-head">
+    <Modal
+      title="Share note"
+      subtitle={note.title || 'Untitled note'}
+      onClose={close}
+    >
+      <div className="form-body scroll">
+        <p>Choose teammates who can read this note.</p>
+        <input
+          aria-label="Find a teammate"
+          type="search"
+          placeholder="Find a teammate…"
+          value={search}
+          onChange={(e) => find(e.target.value)}
+        />
+        <PeoplePicker
+          label="Teammates"
+          value={shared}
+          change={set}
+          options={members.filter(
+            (m) =>
+              m.active &&
+              m.id !== note.owner &&
+              m.name.toLowerCase().includes(search.toLowerCase()),
+          )}
+        />
+      </div>
+      <footer>
+        <Btn onClick={close}>Cancel</Btn>
+        <Btn kind="primary" onClick={() => apply(shared)}>
+          Apply sharing
+        </Btn>
+      </footer>
+    </Modal>
+  );
+}
+export default function Notes({ api, me, members }) {
+  const book = notebook(api),
+    records = useSyncExternalStore(book.subscribe, book.get);
+  const [scope, setScope] = useState('mine'),
+    [project, setProject] = useState(''),
+    [selected, select] = useState(''),
+    [search, find] = useState(''),
+    [sort, setSort] = useState('updated'),
+    [sharing, share] = useState(false),
+    [projectName, createProject] = useState(null),
+    [mobile, showEditor] = useState(false),
+    [loadError, setError] = useState(''),
+    [loaded, setLoaded] = useState(false);
+  const job = useJob(),
+    catalog = useLoad(() => api.command('notes.projects'), [api]),
+    titleRef = useRef(null);
+  useEffect(() => {
+    let live = true;
+    const refresh = () =>
+      book.reload().then(
+        () => {
+          if (live) {
+            setLoaded(true);
+            setError('');
+          }
+        },
+        (e) => {
+          if (live) setError(e.message);
+        },
+      );
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => {
+      live = false;
+      window.removeEventListener('focus', refresh);
+    };
+  }, [book]);
+  const notes = records.map((r) => r.note),
+    mine = notes.filter((n) => n.owner === me.id);
+  const projects = [
+    ...new Set([
+      ...(catalog.data || []),
+      ...mine.map((n) => n.project).filter(Boolean),
+    ]),
+  ].sort((a, b) => a.localeCompare(b));
+  const source =
+    scope === 'shared' ? notes.filter((n) => n.owner !== me.id) : mine;
+  const collection =
+    project || (scope === 'shared' ? 'Shared with me' : 'My notes');
+  const list = source
+    .filter(
+      (n) =>
+        (!project || n.project === project) &&
+        (n.id === selected ||
+          (n.title + ' ' + n.body)
+            .toLowerCase()
+            .includes(search.toLowerCase())),
+    )
+    .sort((a, b) =>
+      sort === 'title' ? a.title.localeCompare(b.title) : b.at - a.at,
+    );
+  const note = list.find((n) => n.id === selected) || list[0],
+    record = records.find((r) => r.note.id === note?.id);
+  const owner = note?.owner === me.id;
+  useEffect(() => {
+    const id = note?.id;
+    return () => {
+      if (id) {
+        book.flush(id);
+        book.dropEmpty(id);
+      }
+    };
+  }, [book, note?.id]);
+  function choose(s, p = '') {
+    setScope(s);
+    setProject(p);
+    select('');
+    find('');
+    showEditor(false);
+  }
+  function compose() {
+    if (note && owner && !note.rev && !note.title && !note.body) {
+      showEditor(true);
+      requestAnimationFrame(() => titleRef.current?.focus());
+      return;
+    }
+    const id = newId('note');
+    book.add({
+      id,
+      owner: me.id,
+      title: '',
+      body: '',
+      project: scope === 'mine' ? project : '',
+      at: Date.now(),
+      shared: [],
+      rev: 0,
+    });
+    setScope('mine');
+    find('');
+    select(id);
+    showEditor(true);
+    requestAnimationFrame(() => titleRef.current?.focus());
+  }
+  function sidebarButton(name, Icon, count, active, onClick) {
+    return (
+      <button
+        key={name}
+        className={'notebook-location ' + (active ? 'active' : '')}
+        onClick={onClick}
+      >
+        <Icon size={17} />
+        <span>{name}</span>
+        <small>{count}</small>
+      </button>
+    );
+  }
+  return (
+    <div className={'notebook ' + (mobile ? 'reading' : '')}>
+      <aside className="notebook-folders">
         <h1>Notes</h1>
-        <div className="row">
-          <Btn onClick={() => setNewProject('')}>New project</Btn>
-          <Btn
-            kind="primary"
-            icon={Plus}
-            onClick={() =>
-              edit({
-                id: newId('note'),
-                owner: me.id,
-                title: '',
-                body: '',
-                project,
-                shared: [],
-              })
-            }
-          >
+        {sidebarButton(
+          'My notes',
+          NotebookPen,
+          mine.length,
+          scope === 'mine' && !project,
+          () => choose('mine'),
+        )}
+        {sidebarButton(
+          'Shared with me',
+          UsersRound,
+          notes.length - mine.length,
+          scope === 'shared',
+          () => choose('shared'),
+        )}
+        <div className="section-line notebook-section">
+          <h2>Projects</h2>
+        </div>
+        <button
+          className="notebook-location new-project"
+          onClick={() => createProject('')}
+        >
+          <FolderPlus size={16} />
+          New project
+        </button>
+        {projects.map((p) =>
+          sidebarButton(
+            p,
+            Folder,
+            mine.filter((n) => n.project === p).length,
+            project === p,
+            () => choose('mine', p),
+          ),
+        )}
+      </aside>
+      <section className="notebook-list">
+        <div className="section-line">
+          <h2>{collection}</h2>
+          <Btn kind="primary compact" icon={SquarePen} onClick={compose}>
             New note
           </Btn>
         </div>
-      </div>
-      <Tabs
-        values={['Mine', 'Shared with me']}
-        value={tab}
-        onChange={(v) => {
-          chooseTab(v);
-          chooseProject('');
-        }}
-      />
-      <div className="notes-layout">
-        <aside className="panel stack">
+        <label className="notebook-search">
+          <Search size={15} />
           <input
-            type="search"
             aria-label="Search notes"
             placeholder="Search notes"
-            value={query}
-            onChange={(e) => search(e.target.value)}
+            value={search}
+            onChange={(e) => {
+              find(e.target.value);
+              select('');
+            }}
           />
-          <div className="form-grid">
-            <Label name="Project">
-              <select
-                value={project}
-                onChange={(e) => chooseProject(e.target.value)}
-              >
-                <option value="">All projects</option>
-                {projects.map((p) => (
-                  <option key={p}>{p}</option>
-                ))}
-              </select>
-            </Label>
-            <Label name="Sort">
-              <select value={sort} onChange={(e) => chooseSort(e.target.value)}>
-                <option value="updated">Last edited</option>
-                <option value="title">Title A–Z</option>
-              </select>
-            </Label>
-          </div>
+        </label>
+        <div className="note-sort">
+          <span>
+            {list.length} {list.length === 1 ? 'note' : 'notes'}
+          </span>
+          <select
+            aria-label="Sort notes"
+            value={sort}
+            onChange={(e) => setSort(e.target.value)}
+          >
+            <option value="updated">Last edited</option>
+            <option value="title">Title A–Z</option>
+          </select>
+        </div>
+        <div className="note-index">
           {list.map((n) => (
             <button
               key={n.id}
-              className={'note-row ' + (n.id === note?.id ? 'current' : '')}
-              onClick={() => select(n.id)}
+              className={'note-summary ' + (note?.id === n.id ? 'active' : '')}
+              onClick={() => {
+                select(n.id);
+                showEditor(true);
+              }}
             >
-              <b>{n.title}</b>
-              {mine && n.shared.length > 0 && (
-                <span title="Shared with others">
-                  <UsersRound size={14} /> Shared
-                </span>
-              )}
+              <strong>{n.title || 'Untitled note'}</strong>
+              <span>{n.body.trim().split('\n')[0] || 'Empty note'}</span>
               <small>
-                {n.project || 'Unfiled'} · {new Date(n.at).toLocaleDateString()}
+                {new Date(n.at).toLocaleDateString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                })}
+                {n.owner === me.id && n.shared.length > 0 && (
+                  <span>
+                    <UsersRound size={12} /> Shared
+                  </span>
+                )}
               </small>
             </button>
           ))}
-          {!list.length && !notes.loading && (
-            <Empty>No notes in this view.</Empty>
-          )}
-          <ErrorText error={notes.error || catalog.error} />
-        </aside>
-        <article className="panel note-reader">
-          {note ? (
-            <>
-              <div className="section-line">
-                <small>{note.project || 'Unfiled'}</small>
-                {mine && <Btn onClick={() => edit(note)}>Edit or share</Btn>}
-              </div>
-              <h2>{note.title}</h2>
-              {!mine && (
-                <small>
-                  Shared by{' '}
-                  {members.find((m) => m.id === note.owner)?.name ||
-                    'a teammate'}
-                </small>
+        </div>
+        <ErrorText error={loadError || catalog.error} />
+        {!list.length && (
+          <small>{loaded ? 'No notes here yet.' : 'Loading notes…'}</small>
+        )}
+      </section>
+      <section className="note-sheet">
+        {note ? (
+          <>
+            <div className="note-sheet-tools">
+              <button className="note-back" onClick={() => showEditor(false)}>
+                <ChevronLeft size={16} /> Notes
+              </button>
+              <span>
+                {owner
+                  ? record.error
+                    ? 'Unsaved changes'
+                    : record.writing ||
+                        (record.dirty && (note.title || note.body))
+                      ? 'Saving…'
+                      : note.rev
+                        ? 'Saved'
+                        : 'New note'
+                  : 'Shared by ' +
+                    (members.find((m) => m.id === note.owner)?.name ||
+                      'a teammate')}
+              </span>
+              {owner && (
+                <Btn
+                  icon={Share2}
+                  disabled={!note.title.trim() && !note.body.trim()}
+                  onClick={() => share(true)}
+                >
+                  Share
+                </Btn>
               )}
-              <p>{note.body}</p>
-            </>
-          ) : (
+            </div>
+            {owner ? (
+              <div className="note-paper">
+                <label className="note-project">
+                  <Folder size={15} />
+                  <select
+                    aria-label="Note project"
+                    value={note.project}
+                    onChange={(e) => {
+                      book.change(note.id, { project: e.target.value });
+                      if (project) setProject(e.target.value);
+                    }}
+                  >
+                    <option value="">Unfiled</option>
+                    {projects.map((p) => (
+                      <option key={p}>{p}</option>
+                    ))}
+                  </select>
+                </label>
+                <input
+                  className="note-title-input"
+                  ref={titleRef}
+                  aria-label="Note title"
+                  placeholder="Untitled note"
+                  maxLength={160}
+                  value={note.title}
+                  onChange={(e) => {
+                    select(note.id);
+                    book.change(note.id, { title: e.target.value });
+                  }}
+                />
+                <textarea
+                  aria-label="Note body"
+                  placeholder="Start writing…"
+                  maxLength={100000}
+                  value={note.body}
+                  onChange={(e) => {
+                    select(note.id);
+                    book.change(note.id, { body: e.target.value });
+                  }}
+                />
+                {record.error && (
+                  <div>
+                    <ErrorText error={record.error} />
+                    <Btn onClick={() => book.flush(note.id)}>Retry</Btn>
+                    <Btn
+                      onClick={() => {
+                        select(book.recover(note.id));
+                        book.reload().catch((e) => setError(e.message));
+                      }}
+                    >
+                      Keep as a new note
+                    </Btn>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <article className="note-paper">
+                <h2>{note.title}</h2>
+                <p>{note.body}</p>
+              </article>
+            )}
+          </>
+        ) : (
+          <div className="resource-empty">
             <NotebookPen size={32} />
-          )}
-        </article>
-      </div>
-      {newProject !== null && (
-        <Modal title="New note project" onClose={() => setNewProject(null)}>
-          <div className="form-body">
-            <Label name="Project name">
-              <input
-                value={newProject}
-                onChange={(e) => setNewProject(e.target.value)}
-              />
-            </Label>
-            <ErrorText error={job.error} />
+            <h3>
+              {scope === 'shared' ? 'Shared notes appear here' : 'Start a note'}
+            </h3>
+            {scope === 'mine' && (
+              <Btn icon={SquarePen} onClick={compose}>
+                Create a note
+              </Btn>
+            )}
           </div>
-          <footer>
-            <Btn
-              kind="primary"
-              disabled={job.busy || !newProject.trim()}
-              onClick={() =>
-                job.run(async () => {
-                  const name = await api.command('notes.project.create', {
-                    name: newProject,
-                  });
-                  setNewProject(null);
-                  chooseTab('Mine');
-                  chooseProject(name);
-                  search('');
-                  catalog.refresh();
-                })
-              }
-            >
-              Create project
-            </Btn>
-          </footer>
-        </Modal>
+        )}
+      </section>
+      {sharing && note && (
+        <ShareNote
+          {...{ note, members }}
+          close={() => share(false)}
+          apply={(shared) => {
+            book.change(note.id, { shared });
+            book.flush(note.id);
+            share(false);
+          }}
+        />
       )}
-      {draft && (
-        <Modal
-          wide
-          title={draft.rev ? 'Edit note' : 'New note'}
-          onClose={() => edit(null)}
-        >
-          <div className="form-body scroll">
-            <Label name="Title">
-              <input
-                autoFocus
-                value={draft.title}
-                onChange={(e) => edit({ ...draft, title: e.target.value })}
-              />
-            </Label>
-            <Label name="Project">
-              <input
-                list="note-projects"
-                placeholder="Choose or create a project"
-                value={draft.project}
-                onChange={(e) => edit({ ...draft, project: e.target.value })}
-              />
-            </Label>
-            <datalist id="note-projects">
-              {[
-                ...(catalog.data || []),
-                ...new Set(
-                  all
-                    .filter((n) => n.owner === me.id && n.project)
-                    .map((n) => n.project),
-                ),
-              ]
-                .filter((p, i, a) => a.indexOf(p) === i)
-                .map((p) => (
-                  <option key={p}>{p}</option>
-                ))}
-            </datalist>
-            <Label name="Note">
-              <textarea
-                rows={12}
-                value={draft.body}
-                onChange={(e) => edit({ ...draft, body: e.target.value })}
-              />
-            </Label>
-            <details>
-              <summary>Share with teammates ({draft.shared.length})</summary>
-              <PeoplePicker
-                label="Can read"
-                options={members.filter((m) => m.active && m.id !== me.id)}
-                value={draft.shared}
-                change={(shared) => edit({ ...draft, shared })}
-              />
-            </details>
-            <ErrorText error={job.error} />
-          </div>
-          <footer>
-            <Btn onClick={() => edit(null)}>Cancel</Btn>
-            <Btn
-              kind="primary"
-              disabled={job.busy || !draft.title.trim()}
-              onClick={() =>
-                job.run(async () => {
-                  const result = await api.command('notes.save', draft);
-                  chooseTab('Mine');
-                  chooseProject(result.project);
-                  search('');
-                  select(result.id);
-                  edit(null);
-                  notes.refresh();
-                  catalog.refresh();
-                })
-              }
-            >
-              Save note
-            </Btn>
-          </footer>
+      {projectName !== null && (
+        <Modal title="New project" onClose={() => createProject(null)}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              job.run(async () => {
+                const name = await api.command('notes.project.create', {
+                  name: projectName,
+                });
+                catalog.refresh();
+                createProject(null);
+                choose('mine', name);
+              });
+            }}
+          >
+            <div className="form-body">
+              <Label name="Project name">
+                <input
+                  required
+                  value={projectName}
+                  onChange={(e) => createProject(e.target.value)}
+                />
+              </Label>
+              <ErrorText error={job.error} />
+            </div>
+            <footer>
+              <Btn onClick={() => createProject(null)}>Cancel</Btn>
+              <button
+                className="btn primary"
+                disabled={job.busy || !projectName.trim()}
+              >
+                Create project
+              </button>
+            </footer>
+          </form>
         </Modal>
       )}
     </div>
