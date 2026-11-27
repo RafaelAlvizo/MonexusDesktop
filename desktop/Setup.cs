@@ -185,13 +185,14 @@ internal static class Setup {
         cleanup.Add(delegate { if(Directory.GetFileSystemEntries(oldRoot).Length==0)Directory.Delete(oldRoot); });
         return cleanup;
     }
-    static string Install() {
+    static string Install(bool silent) {
         if(Process.GetProcessesByName("Monexus").Any(p=>p.SessionId==Process.GetCurrentProcess().SessionId))
             throw new IOException("Save your work and choose Quit Monexus Workspace in the system tray before installing.");
         InstallPaths.EnsureRoot();
         var temp=Path.Combine(Root,"Staging-"+Guid.NewGuid().ToString("N"));
         try {
             Directory.CreateDirectory(temp);using(var s=Assembly.GetExecutingAssembly().GetManifestResourceStream("payload"))using(var z=new ZipArchive(s,ZipArchiveMode.Read))z.ExtractToDirectory(temp);
+            WebViewPrerequisite.EnsureInstalled(temp, silent);
             var versionDir=Path.Combine(Root,"app-"+Version);Directory.CreateDirectory(versionDir);
             foreach(var name in PayloadNames()){var dest=Path.Combine(versionDir,name);Directory.CreateDirectory(Path.GetDirectoryName(dest));File.Copy(Path.Combine(temp,name),dest,true);}
             string exe=Path.Combine(versionDir,"Monexus.exe"),setup=Path.Combine(Root,"MonexusSetup.exe");
@@ -207,7 +208,12 @@ internal static class Setup {
             SHChangeNotify(0x08000000,0,IntPtr.Zero,IntPtr.Zero);
             return missing.Count == 0 ? "" : "Windows could not add the " + String.Join(" and ", missing) +
                 ". You can open Monexus here:\n" + exe + "\n\n";
-        }finally{if(Directory.Exists(temp))Directory.Delete(temp,true);}
+        } finally {
+            // An unfinished Windows prerequisite installer can still hold a staging file.
+            try { if (Directory.Exists(temp)) Directory.Delete(temp, true); }
+            catch (IOException) {}
+            catch (UnauthorizedAccessException) {}
+        }
     }
     static void Uninstall(){
         var app=Path.Combine(Root,"app-"+Version);
@@ -234,7 +240,7 @@ internal static class Setup {
                 bool acquired;
                 try{acquired=guard.WaitOne(0);}catch(System.Threading.AbandonedMutexException){acquired=true;}
                 if(!acquired)throw new IOException("Another Monexus installer is already running.");
-                try{if(remove)Uninstall();else shortcutNote = Install();}finally{guard.ReleaseMutex();}
+                try{if(remove)Uninstall();else shortcutNote = Install(silent);}finally{guard.ReleaseMutex();}
             }
             if (silent && shortcutNote.Length > 0) Console.Error.WriteLine(shortcutNote);
             if (!silent && !remove && MessageBox.Show(shortcutNote + "Open Monexus Workspace now?", Product, MessageBoxButtons.YesNo) == DialogResult.Yes) {

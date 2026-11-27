@@ -36,6 +36,11 @@ jobs:
           foreach ($path in $app, $updater, $startLink, $updateLink) {
             if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Setup did not create $path" }
           }
+          $probe = Start-Process -FilePath $app -ArgumentList '/check-webview' -WindowStyle Hidden -Wait -PassThru
+          if ($probe.ExitCode -ne 0) { throw "Installed Monexus could not detect WebView2 ($($probe.ExitCode))" }
+          $env:WEBVIEW2_BROWSER_EXECUTABLE_FOLDER = Join-Path $env:RUNNER_TEMP 'missing-webview2'
+          $missing = Start-Process -FilePath $app -ArgumentList '/check-webview' -WindowStyle Hidden -Wait -PassThru
+          if ($missing.ExitCode -ne 20) { throw "Expected the missing-runtime result, received $($missing.ExitCode)" }
           $shell = New-Object -ComObject WScript.Shell
           $update = $shell.CreateShortcut($updateLink)
           if ($shell.CreateShortcut($startLink).TargetPath -ine [IO.Path]::GetFullPath($app) -or

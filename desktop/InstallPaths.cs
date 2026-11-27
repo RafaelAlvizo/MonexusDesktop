@@ -6,6 +6,8 @@ using System.Security.Principal;
 using Microsoft.Win32;
 
 internal static class InstallPaths {
+    // Exit code used only by the staged host's /check-webview prerequisite check.
+    internal const int RuntimeMissing = 20;
     static readonly SecurityIdentifier User = WindowsIdentity.GetCurrent().User;
     internal const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\MonexusWorkspace";
     static readonly string Local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

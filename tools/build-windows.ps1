@@ -16,6 +16,15 @@ $hash = [Security.Cryptography.SHA256]::Create()
 $stream = [IO.File]::OpenRead($sdkZip)
 try { $digest = [BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-','') } finally { $stream.Dispose(); $hash.Dispose() }
 if ($digest -ne '1B0146D842344B8462520FB38AD8EFF46E52031C19B955376C227BEC619FAEFD') { throw 'WebView2 package checksum mismatch.' }
+$bootstrapper = Join-Path $cache 'MicrosoftEdgeWebview2Setup.exe'
+if (!(Test-Path -LiteralPath $bootstrapper)) {
+    Invoke-WebRequest -UseBasicParsing 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $bootstrapper
+}
+$signature = Get-AuthenticodeSignature -LiteralPath $bootstrapper
+if ($signature.Status -ne 'Valid' -or
+    $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -ne 'Microsoft Corporation') {
+    throw 'The WebView2 installer must have a valid Microsoft signature.'
+}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 if (!(Test-Path (Join-Path $sdk 'lib\net45\Microsoft.Web.WebView2.Core.dll'))) { [IO.Compression.ZipFile]::ExtractToDirectory($sdkZip,$sdk) }
 foreach ($dll in @('Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll')) { Copy-Item (Join-Path $sdk "lib\net45\$dll") $stage }
@@ -43,6 +52,6 @@ $payload = Join-Path $output ('payload-' + [guid]::NewGuid().ToString('N') + '.z
 [IO.Compression.ZipFile]::CreateFromDirectory($stage,$payload,[IO.Compression.CompressionLevel]::Optimal,$false)
 $installer = Join-Path $release 'Monexus-Workspace-Setup-x64.exe'
 $setupArgs = @("/out:$installer",$versionSource,'/r:System.Web.Extensions.dll',"/resource:$payload,payload",'/r:Microsoft.CSharp.dll','/r:System.IO.Compression.dll','/r:System.IO.Compression.FileSystem.dll',"$rootPath\desktop\Setup.cs")
-& $compiler @baseArgs @setupArgs (Join-Path $rootPath 'desktop\InstallPaths.cs') (Join-Path $rootPath 'desktop\InstallerShortcuts.cs')
+& $compiler @baseArgs @setupArgs "/resource:$bootstrapper,webview2-installer" (Join-Path $rootPath 'desktop\InstallPaths.cs') (Join-Path $rootPath 'desktop\InstallerShortcuts.cs') (Join-Path $rootPath 'desktop\WebViewPrerequisite.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
 Get-Item $installer | Select-Object FullName,Length

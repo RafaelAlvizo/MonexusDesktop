@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Web.Script.Serialization;
 using Microsoft.Web.WebView2.Core;
@@ -15,7 +16,7 @@ using Windows.UI.Notifications;
 internal class WorkspaceWindow : Form {
     const string Origin = "https://workspace.monexus.local";
     const string AppId = "Monexus.Workspace";
-    readonly WebView2 view = new WebView2();
+    WebView2 view;
     readonly Dictionary<string,Form> callWindows = new Dictionary<string,Form>();
     readonly NotifyIcon tray = new NotifyIcon();
     readonly EventWaitHandle showEvent;
@@ -76,22 +77,28 @@ internal class WorkspaceWindow : Form {
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
 
-    [STAThread] static void Main() {
+    [STAThread] static int Main(string[] args) {
+        if (Array.Exists(args, arg => arg.Equals("/check-webview", StringComparison.OrdinalIgnoreCase))) {
+            try {
+                return String.IsNullOrWhiteSpace(CoreWebView2Environment.GetAvailableBrowserVersionString(null)) ? InstallPaths.RuntimeMissing : 0;
+            } catch (WebView2RuntimeNotFoundException) { return InstallPaths.RuntimeMissing; }
+            catch (Exception error) { return error.HResult; }
+        }
         SetProcessDPIAware();
         SetCurrentProcessExplicitAppUserModelID(AppId);
         bool first;
         using(var signal = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\Monexus.Workspace.Show", out first)) {
-            if(!first) { signal.Set(); return; }
+            if(!first) { signal.Set(); return 0; }
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new WorkspaceWindow(signal));
         }
+        return 0;
     }
     WorkspaceWindow(EventWaitHandle signal) {
         showEvent=signal;Text="Monexus Workspace " + BuildVersion.Value;MinimumSize=new Size(880,600);
         var screen=Screen.PrimaryScreen.WorkingArea;Width=Math.Min(1440,screen.Width);Height=Math.Min(900,screen.Height);
         StartPosition=FormStartPosition.CenterScreen;Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-        view.Dock=DockStyle.Fill;Controls.Add(view);
         var menu=new ContextMenuStrip();menu.Items.Add("Open Monexus Workspace",null,delegate { RestoreWorkspace(); });menu.Items.Add("Quit Monexus Workspace",null,delegate { quitting=true;Close(); });
         tray.Text=Text;tray.Icon=Icon;tray.ContextMenuStrip=menu;tray.Visible=true;
         tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)RestoreWorkspace();};
@@ -177,17 +184,63 @@ internal class WorkspaceWindow : Form {
             if(!child.IsDisposed){MessageBox.Show(child,ex.Message,"Unable to open workspace window");child.Close();}
         }
     }
+    static bool ProfileConflict(Exception error) {
+        for (; error != null; error = error.InnerException)
+            if (error.HResult == unchecked((int)0x8007139F)) return true;
+        return false;
+    }
+
+    async Task<CoreWebView2Environment> OpenProfile(string profile) {
+        var env = await CoreWebView2Environment.CreateAsync(null, profile, null);
+        var candidate = new WebView2 { Dock = DockStyle.Fill };
+        try {
+            Controls.Add(candidate);
+            await candidate.EnsureCoreWebView2Async(env);
+            view = candidate;
+            return env;
+        } catch {
+            candidate.Dispose();
+            throw;
+        }
+    }
+
+    async Task<CoreWebView2Environment> OpenWorkspaceProfile() {
+        string profile = InstallPaths.Profile;
+        string recovery = profile + "-Recovery", marker = recovery + ".active";
+        bool managedFolder = !String.IsNullOrEmpty(Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER"));
+        bool usingRecovery = !managedFolder && File.Exists(marker);
+        string current = usingRecovery ? recovery : profile;
+        try { return await OpenProfile(current); }
+        catch (Exception error) { if (!ProfileConflict(error)) throw; }
+
+        // The previous browser process can still be releasing this profile after an update.
+        await Task.Delay(1800);
+        try { return await OpenProfile(current); }
+        catch (Exception error) {
+            if (!ProfileConflict(error) || usingRecovery || managedFolder) throw;
+            if (MessageBox.Show(this, "WebView2 still cannot open your Monexus profile. Try a separate profile? " +
+                "Your existing profile will be kept. You may need to sign in again.", Text,
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) throw;
+        }
+        var env = await OpenProfile(recovery);
+        File.WriteAllText(marker, "");
+        return env;
+    }
+
     async void StartWebView(object sender,EventArgs args) {
         showWait=ThreadPool.RegisterWaitForSingleObject(showEvent,(o,t)=>{if(!IsDisposed)BeginInvoke(new Action(RestoreWorkspace));},null,Timeout.Infinite,false);
+        string stage = "open your Monexus profile";
         try {
             if(String.IsNullOrEmpty(Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER")))InstallPaths.EnsureRoot();
-            string profile=InstallPaths.Profile;
-            var env=await CoreWebView2Environment.CreateAsync(null,profile,null);
-            await view.EnsureCoreWebView2Async(env);var core=view.CoreWebView2;
+            var env=await OpenWorkspaceProfile();
+            var core=view.CoreWebView2;
+            stage = "configure the workspace window";
             ConfigureView(core);
             try { await core.Profile.SetPermissionStateAsync(CoreWebView2PermissionKind.Autoplay,Origin,CoreWebView2PermissionState.Allow); }
             catch (NotImplementedException) { /* Older runtimes use the shared audio button. */ }
             catch (COMException) { /* Device policy can manage playback permissions. */ }
+            catch (InvalidOperationException) { /* Playback permission can be unavailable for this profile. */ }
+            catch (UnauthorizedAccessException) { /* Managed devices can restrict profile changes. */ }
             var meetingAlarm = new System.Windows.Forms.Timer();
             meetingAlarm.Tick += (s,e) => {meetingAlarm.Stop();core.PostWebMessageAsJson("{\"kind\":\"meeting_clock\"}");};
             FormClosed += (s,e) => meetingAlarm.Dispose();
@@ -234,7 +287,22 @@ internal class WorkspaceWindow : Form {
                 } catch(Exception){core.PostWebMessageAsString("Windows could not complete the desktop action.");}
             };
             core.Navigate(Origin+"/index.html");
-        } catch(Exception e) { MessageBox.Show("Monexus needs the Microsoft Edge WebView2 Evergreen Runtime.\n\n"+e.Message,Text,MessageBoxButtons.OK,MessageBoxIcon.Error);quitting=true;Close(); }
+        } catch (WebView2RuntimeNotFoundException) {
+            string setup = Path.Combine(InstallPaths.Root, "MonexusSetup.exe");
+            if (File.Exists(setup)) {
+                if (MessageBox.Show(this, "Microsoft Edge WebView2 is missing. Run Monexus setup to install it now?", Text,
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes) {
+                    try { InstallPaths.StartInstalledExecutable(setup, "/wait:" + Process.GetCurrentProcess().Id); }
+                    catch (Exception error) { MessageBox.Show(this, "Open the latest Monexus installer to repair WebView2.\n\n" + error.Message, Text); }
+                }
+            } else MessageBox.Show(this, "Run the latest Monexus installer to install Microsoft Edge WebView2.", Text);
+            quitting = true; Close();
+        } catch (Exception error) {
+            string help = ProfileConflict(error) ? "Restart Windows to release the WebView2 profile, then open Monexus again.\n\n" : "";
+            MessageBox.Show(this, "Monexus could not " + stage + ".\n\n" + help + error.Message +
+                "\nWindows code: 0x" + error.GetBaseException().HResult.ToString("X8"), Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            quitting = true; Close();
+        }
     }
     static bool Local(string address){Uri u;return Uri.TryCreate(address,UriKind.Absolute,out u)&&u.GetLeftPart(UriPartial.Authority)==Origin;}
     static void OpenWeb(string address){Uri u;if(Uri.TryCreate(address,UriKind.Absolute,out u)&&(u.Scheme=="https"||u.Scheme=="http")&&String.IsNullOrEmpty(u.UserInfo))Process.Start(new ProcessStartInfo(u.AbsoluteUri){UseShellExecute=true});}
