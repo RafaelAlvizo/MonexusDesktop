@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -12,6 +13,13 @@ internal static class InstallPaths {
     internal static readonly string LocalData = Path.Combine(Local, "Monexus");
     internal static readonly string Root = FindRoot();
     internal static readonly string Profile = Path.Combine(Root == LocalRoot ? LocalData : Root, "WebView");
+
+    internal static void StartInstalledExecutable(string executable, string arguments) {
+        using (Process.Start(new ProcessStartInfo(executable, arguments) {
+            UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(executable)
+        })) {}
+    }
 
     static string FindRoot() {
         using (var key = Registry.CurrentUser.OpenSubKey(UninstallKey)) {

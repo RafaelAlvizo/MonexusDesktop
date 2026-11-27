@@ -205,7 +205,7 @@ internal class WorkspaceWindow : Form {
                     }
                     if(command=="update"){
                         string setup=Path.Combine(InstallPaths.Root,"MonexusSetup.exe");
-                        if(File.Exists(setup))Process.Start(setup,"/update");
+                        if(File.Exists(setup))InstallPaths.StartInstalledExecutable(setup,"/update");
                         else MessageBox.Show(this,"Run the Monexus Workspace installer to enable updates.");
                     }
                     if(command=="open_link")OpenWeb(Convert.ToString(msg["url"]));

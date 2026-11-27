@@ -18,38 +18,12 @@ using System.Collections.Generic;
 internal static class Setup {
     const string Product="Monexus Workspace",Version=BuildVersion.Value,Id="Monexus.Workspace";
     static readonly string Root=InstallPaths.Root;
-    static readonly string Shortcut=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+".lnk");
+    static readonly string Shortcut=InstallerShortcuts.PathFor(Environment.SpecialFolder.Programs, Product+".lnk");
+    static readonly string InstalledApp=Path.Combine(Root, "app-"+Version, "Monexus.exe");
     const string UninstallKey=InstallPaths.UninstallKey;
-    // IPropertyStore adds the AUMID Windows uses to associate native notifications with this shortcut.
-    [StructLayout(LayoutKind.Sequential,Pack=4)] struct PropertyKey { public Guid fmtid; public uint pid; }
-    [StructLayout(LayoutKind.Explicit,Size=24)] struct Variant { [FieldOffset(0)]public ushort vt;[FieldOffset(8)] public IntPtr text; }
-    [ComImport,Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    interface PropertyStore { void GetCount(out uint count);void GetAt(uint index,out PropertyKey key);void GetValue(ref PropertyKey key,out Variant value);void SetValue(ref PropertyKey key,ref Variant value);void Commit(); }
-    [DllImport("shell32.dll",CharSet=CharSet.Unicode,PreserveSig=false)] static extern void SHGetPropertyStoreFromParsingName(string path,IntPtr context,int flags,ref Guid iid,[MarshalAs(UnmanagedType.Interface)]out PropertyStore store);
     [DllImport("shell32.dll")] static extern void SHChangeNotify(int eventId,uint flags,IntPtr item1,IntPtr item2);
-    static void RegisterShortcut(string exe) {
-        dynamic shell=Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));dynamic link=shell.CreateShortcut(Shortcut);
-        link.TargetPath=exe;link.WorkingDirectory=Root;link.IconLocation=exe+",0";link.Save();
-        Guid guid=typeof(PropertyStore).GUID;PropertyStore store;SHGetPropertyStoreFromParsingName(Shortcut,IntPtr.Zero,2,ref guid,out store);
-        var key=new PropertyKey{fmtid=new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),pid=5};
-        var value=new Variant{vt=31,text=Marshal.StringToCoTaskMemUni(Id)};
-        try{store.SetValue(ref key,ref value);}finally{Marshal.FreeCoTaskMem(value.text);}
-        key.pid=26;
-        value=new Variant{vt=72,text=Marshal.AllocCoTaskMem(16)};
-        try{Marshal.StructureToPtr(new Guid("DC295354-75BA-4CEC-849B-1768E030278B"),value.text,false);store.SetValue(ref key,ref value);store.Commit();}finally{Marshal.FreeCoTaskMem(value.text);}
-    }
-    static readonly string UpdateShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Update Monexus Workspace.lnk");
+    static readonly string UpdateShortcut=InstallerShortcuts.PathFor(Environment.SpecialFolder.DesktopDirectory, "Update Monexus Workspace.lnk");
     const string InstallerName = "Monexus-Workspace-Setup-x64.exe";
-    static void RegisterUpdateShortcut(string setup) {
-        dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
-        dynamic link = shell.CreateShortcut(UpdateShortcut);
-        link.TargetPath = setup;
-        link.Arguments = "/update";
-        link.WorkingDirectory = Root;
-        link.IconLocation = setup + ",0";
-        link.Description = "Check for a Monexus Workspace update";
-        link.Save();
-    }
     static Version InstallerVersion(string path) {
         if (String.IsNullOrEmpty(path) || !File.Exists(path)) return null;
         var info = FileVersionInfo.GetVersionInfo(path);
@@ -122,7 +96,7 @@ internal static class Setup {
             };
             apply.Click += async delegate {
                 var found = InstallerVersion(source);
-                var installed = Path.Combine(Root, "app-" + Version, "Monexus.exe");
+                var installed = InstalledApp;
                 try {
                     foreach (var process in Process.GetProcessesByName("Monexus")) {
                         using (process) {
@@ -148,7 +122,8 @@ internal static class Setup {
                         form.Close();
                         return;
                     }
-                    Process.Start(found != null && found > current ? source : installed);
+                    if (found != null && found > current) Process.Start(source);
+                    else InstallPaths.StartInstalledExecutable(installed, "");
                     form.Close();
                 } catch (Exception error) { if (!form.IsDisposed) { browse.Enabled = apply.Enabled = true; status.Text = error.Message; } }
             };
@@ -210,7 +185,7 @@ internal static class Setup {
         cleanup.Add(delegate { if(Directory.GetFileSystemEntries(oldRoot).Length==0)Directory.Delete(oldRoot); });
         return cleanup;
     }
-    static void Install() {
+    static string Install() {
         if(Process.GetProcessesByName("Monexus").Any(p=>p.SessionId==Process.GetCurrentProcess().SessionId))
             throw new IOException("Save your work and choose Quit Monexus Workspace in the system tray before installing.");
         InstallPaths.EnsureRoot();
@@ -222,13 +197,16 @@ internal static class Setup {
             string exe=Path.Combine(versionDir,"Monexus.exe"),setup=Path.Combine(Root,"MonexusSetup.exe");
             if(!String.Equals(Application.ExecutablePath,setup,StringComparison.OrdinalIgnoreCase))File.Copy(Application.ExecutablePath,setup,true);
             var cleanup=MigrateLegacy();
-            RegisterShortcut(exe);
-            RegisterUpdateShortcut(setup);
+            var missing = new List<string>();
+            if (!InstallerShortcuts.TryCreate(Shortcut, exe, "", Product, Id)) missing.Add("Start menu shortcut");
+            if (!InstallerShortcuts.TryCreate(UpdateShortcut, setup, "/update", "Check for a Monexus Workspace update", null)) missing.Add("desktop update shortcut");
             using(var k=Registry.CurrentUser.CreateSubKey(@"Software\Classes\AppUserModelId\"+Id)){k.SetValue("DisplayName",Product);k.SetValue("CustomActivator","{DC295354-75BA-4CEC-849B-1768E030278B}");k.SetValue("IconUri",Path.Combine(versionDir,"Monexus.png"));}
             using(var k=Registry.CurrentUser.CreateSubKey(@"Software\Classes\monexus-workspace")){k.SetValue("","URL:Monexus Workspace");k.SetValue("URL Protocol","");using(var action=k.CreateSubKey(@"shell\open\command"))action.SetValue("","\""+exe+"\"");}
             using(var k=Registry.CurrentUser.CreateSubKey(UninstallKey)){k.SetValue("DisplayName",Product);k.SetValue("DisplayVersion",Version);k.SetValue("UpdateSource",setup);k.SetValue("Publisher","Monexus");k.SetValue("DisplayIcon",exe);k.SetValue("InstallLocation",Root);k.SetValue("UninstallString","\""+setup+"\" /uninstall");}
             foreach(var finish in cleanup)finish();
             SHChangeNotify(0x08000000,0,IntPtr.Zero,IntPtr.Zero);
+            return missing.Count == 0 ? "" : "Windows could not add the " + String.Join(" and ", missing) +
+                ". You can open Monexus here:\n" + exe + "\n\n";
         }finally{if(Directory.Exists(temp))Directory.Delete(temp,true);}
     }
     static void Uninstall(){
@@ -251,13 +229,22 @@ internal static class Setup {
                 Process.Start(helper,"/uninstall /quiet /wait:"+Process.GetCurrentProcess().Id);return 0;
             }
             foreach(string a in args)if(a.StartsWith("/wait:")){int pid;if(Int32.TryParse(a.Substring(6),out pid))try{Process.GetProcessById(pid).WaitForExit(10000);}catch(ArgumentException){}}
+            string shortcutNote = "";
             using(var guard=new System.Threading.Mutex(false,@"Local\MonexusWorkspaceInstaller-"+System.Security.Principal.WindowsIdentity.GetCurrent().User.Value)){
                 bool acquired;
                 try{acquired=guard.WaitOne(0);}catch(System.Threading.AbandonedMutexException){acquired=true;}
                 if(!acquired)throw new IOException("Another Monexus installer is already running.");
-                try{if(remove)Uninstall();else Install();}finally{guard.ReleaseMutex();}
+                try{if(remove)Uninstall();else shortcutNote = Install();}finally{guard.ReleaseMutex();}
             }
-            if(!silent&&!remove&&MessageBox.Show("Open Monexus Workspace now?",Product,MessageBoxButtons.YesNo)==DialogResult.Yes)Process.Start(Shortcut);
+            if (silent && shortcutNote.Length > 0) Console.Error.WriteLine(shortcutNote);
+            if (!silent && !remove && MessageBox.Show(shortcutNote + "Open Monexus Workspace now?", Product, MessageBoxButtons.YesNo) == DialogResult.Yes) {
+                try { InstallPaths.StartInstalledExecutable(InstalledApp, ""); }
+                catch (System.ComponentModel.Win32Exception error) {
+                    MessageBox.Show("Monexus was installed, but Windows could not start it.\n\n" + InstalledApp +
+                        "\n\n" + error.Message, Product, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return 1;
+                }
+            }
             return 0;
         }catch(Exception e){if(!silent)MessageBox.Show(e.Message,Product,MessageBoxButtons.OK,MessageBoxIcon.Error);else Console.Error.WriteLine(e.Message);return 1;}
     }

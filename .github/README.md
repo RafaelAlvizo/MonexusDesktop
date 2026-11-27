@@ -1,6 +1,8 @@
 # Monexus Workspace for Windows
 
-Download **Monexus-Workspace-Setup-x64.exe** from the [latest release](https://github.com/RafaelAlvizo/MonexusDesktop/releases/latest). After installing the first GitHub-enabled version, use **Update** to check for newer builds. Save your work and quit Monexus from its tray icon before installing. The updater checks the version and SHA-256 digest against the GitHub release before launching setup.
+[Download Monexus for Windows (x64)](https://github.com/RafaelAlvizo/MonexusDesktop/releases/latest/download/Monexus-Workspace-Setup-x64.exe). Open the downloaded installer and choose **Yes** when it asks to open Monexus. This link always downloads the latest installer.
+
+If Monexus is already running, save your work and choose **Quit Monexus Workspace** from its tray icon before installing. For future updates, use **Update** inside Monexus. The updater verifies the version and SHA-256 digest against the GitHub release before launching setup.
 
 This repository contains the desktop client. Company records require a verified workspace account. A push to main runs the desktop model tests, builds on Windows and publishes the installer after the build succeeds.
 

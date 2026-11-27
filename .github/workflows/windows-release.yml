@@ -22,6 +22,26 @@ jobs:
       - run: npm ci
       - run: node --test tests/desktop-model.test.mjs
       - run: npm run installer
+      - name: Check a fresh per-user installation
+        shell: pwsh
+        run: |
+          $installer = Resolve-Path 'release/Monexus-Workspace-Setup-x64.exe'
+          $setup = Start-Process -FilePath $installer -ArgumentList '/quiet' -WindowStyle Hidden -PassThru -Wait
+          if ($setup.ExitCode -ne 0) { throw "Setup returned $($setup.ExitCode)" }
+          $root = Join-Path $env:LOCALAPPDATA 'Programs/Monexus Workspace'
+          $app = Join-Path $root "app-$env:MONEXUS_RELEASE_VERSION/Monexus.exe"
+          $updater = Join-Path $root 'MonexusSetup.exe'
+          $startLink = Join-Path ([Environment]::GetFolderPath('Programs')) 'Monexus Workspace.lnk'
+          $updateLink = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Update Monexus Workspace.lnk'
+          foreach ($path in $app, $updater, $startLink, $updateLink) {
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Setup did not create $path" }
+          }
+          $shell = New-Object -ComObject WScript.Shell
+          $update = $shell.CreateShortcut($updateLink)
+          if ($shell.CreateShortcut($startLink).TargetPath -ine [IO.Path]::GetFullPath($app) -or
+              $update.TargetPath -ine [IO.Path]::GetFullPath($updater) -or $update.Arguments -ne '/update') {
+            throw 'Installed shortcuts point to the wrong target.'
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer
