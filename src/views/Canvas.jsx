@@ -1,3 +1,4 @@
+import { quickMenu } from '../Navigation.jsx';
 import React, { useState, useRef } from 'react';
 import { Btn, ErrorText, Label, usePages, More, useJob } from '../ui.jsx';
 import { newId, mayContribute } from '../../functions/core/model.mjs';
@@ -50,7 +51,7 @@ export default function Canvas({ api, me, contributions }) {
     return [p.x, p.y];
   }
   function down(e) {
-    if (!can || job.busy) return;
+    if (!can || job.busy || e.button !== 0) return;
     const [x, y] = point(e),
       id = e.target.closest('[data-id]')?.dataset.id,
       item = doc.elements.find((i) => i.id === id);
@@ -178,6 +179,30 @@ export default function Canvas({ api, me, contributions }) {
               viewBox="0 0 1000 650"
               className="drawing-surface"
               aria-label="Drawing canvas"
+              onContextMenu={(e) => {
+                const id = e.target.closest('[data-id]')?.dataset.id;
+                if (!id || !can || job.busy) return;
+                quickMenu(e, [
+                  {
+                    label: 'Select item',
+                    run: () => {
+                      tool('select');
+                      pick(id);
+                    },
+                  },
+                  {
+                    label: 'Remove item',
+                    run: () => {
+                      change((es) =>
+                        es.filter(
+                          (i) => i.id !== id && i.from !== id && i.to !== id,
+                        ),
+                      );
+                      pick('');
+                    },
+                  },
+                ]);
+              }}
               onPointerDown={down}
               onPointerUp={() => (drag.current = null)}
               onPointerCancel={() => (drag.current = null)}

@@ -48,6 +48,26 @@ export function useNavigationOrder(api, tell) {
   function props(group, id, ids) {
     return {
       draggable: true,
+      onContextMenu: (e) => {
+        const button = e.currentTarget,
+          index = ids.indexOf(id);
+        function move(to) {
+          const next = ids.filter((x) => x !== id);
+          next.splice(to, 0, id);
+          arrange(group, next);
+        }
+        quickMenu(e, [
+          {
+            label: 'Open ' + button.textContent.trim(),
+            run: () => button.click(),
+          },
+          index > 0 && { label: 'Move up', run: () => move(index - 1) },
+          index < ids.length - 1 && {
+            label: 'Move down',
+            run: () => move(index + 1),
+          },
+        ]);
+      },
       onDragStart: (e) =>
         e.dataTransfer.setData(
           'monexus/navigation',
@@ -93,7 +113,7 @@ export function QuickActions() {
       )
         return;
       const row = e.target.closest(
-        '.conversation-row,.post,.chat-post,.ticket-card,.table-ticket,.resource-row,.note-summary,.notebook-location,.nav-item,.agenda-item,.meeting-card,.meeting-row,.notice-row,.inbox-row,.figma-tools,.note-sheet-tools,.board-actions,[data-quick-actions]',
+        '.conversation-row,.post,.chat-post,.ticket-card,.table-ticket,.resource-row,.note-summary,.notebook-location,.nav-item, .report-card,.canvas-layout aside .resource-name,.agenda-item,.meeting-card,.meeting-row,.notice-row,.inbox-row,.figma-tools,.note-sheet-tools,.board-actions,[data-quick-actions]',
       );
       if (!row) return;
       const controls = [

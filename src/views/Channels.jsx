@@ -1,3 +1,4 @@
+import { quickMenu } from '../Navigation.jsx';
 import { createPortal } from 'react-dom';
 import {
   ChevronDown,
@@ -1161,6 +1162,26 @@ export default function Channels({
         {rows.map((item, i) => (
           <div
             className="conversation-row"
+            onContextMenu={(e) =>
+              quickMenu(e, [
+                {
+                  label: 'Open ' + item.name,
+                  run: () => (dm ? openDirect(item.id) : onSelect(item.id)),
+                },
+                orderReady &&
+                  !query &&
+                  i > 0 && {
+                    label: 'Move up',
+                    run: () => shift(rows, group, i, -1),
+                  },
+                orderReady &&
+                  !query &&
+                  i < rows.length - 1 && {
+                    label: 'Move down',
+                    run: () => shift(rows, group, i, 1),
+                  },
+              ])
+            }
             key={item.id}
             draggable={orderReady && !query}
             onDragStart={(e) =>

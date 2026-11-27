@@ -209,8 +209,20 @@ function Plan({ api, me, members, context, close, created }) {
                 ))}
             </div>
             <small>
-              {invited.length} people · {roleIds.length} roles ·{' '}
-              {channels.length + (channel ? 1 : 0)} channels
+              {[
+                invited.length +
+                  ' ' +
+                  (invited.length === 1 ? 'person' : 'people'),
+                roleIds.length +
+                  ' ' +
+                  (roleIds.length === 1 ? 'role' : 'roles'),
+                channels.length +
+                  (channel ? 1 : 0) +
+                  ' ' +
+                  (channels.length + (channel ? 1 : 0) === 1
+                    ? 'channel'
+                    : 'channels'),
+              ].join(' · ')}
             </small>
             <ErrorText error={groups.error || channelList.error} />
           </section>
