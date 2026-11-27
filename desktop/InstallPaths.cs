@@ -2,16 +2,34 @@ using System;
 using System.IO;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using Microsoft.Win32;
 
 internal static class InstallPaths {
     static readonly SecurityIdentifier User = WindowsIdentity.GetCurrent().User;
-    static readonly string Base = @"D:\Monexus";
-    internal static readonly string Root = Path.Combine(Base, User.Value);
-    internal static readonly string Profile = Path.Combine(Root,"WebView");
+    internal const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\MonexusWorkspace";
+    static readonly string Local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+    internal static readonly string LocalRoot = Path.Combine(Local, "Programs", "Monexus Workspace");
+    internal static readonly string LocalData = Path.Combine(Local, "Monexus");
+    internal static readonly string Root = FindRoot();
+    internal static readonly string Profile = Path.Combine(Root == LocalRoot ? LocalData : Root, "WebView");
+
+    static string FindRoot() {
+        using (var key = Registry.CurrentUser.OpenSubKey(UninstallKey)) {
+            var registered = key == null ? null : key.GetValue("InstallLocation") as string;
+            var priorRoot = Path.Combine(@"D:\Monexus", User.Value);
+            if (String.Equals(registered, priorRoot, StringComparison.OrdinalIgnoreCase) && Directory.Exists(priorRoot))
+                return priorRoot;
+        }
+        return LocalRoot;
+    }
+
     internal static string EnsureRoot() {
-        if (!Directory.Exists(@"D:\")) throw new IOException("Monexus needs a writable D: drive.");
-        Directory.CreateDirectory(Base);
-        CheckOrdinary(Base);
+        if (Root == LocalRoot) {
+            Directory.CreateDirectory(Root);
+            CheckOrdinary(Root);
+            return Root;
+        }
+        CheckOrdinary(Path.GetDirectoryName(Root));
         var security = new DirectorySecurity();
         security.SetAccessRuleProtection(true,false);
         security.SetOwner(User);

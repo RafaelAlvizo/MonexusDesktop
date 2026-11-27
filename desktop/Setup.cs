@@ -19,7 +19,7 @@ internal static class Setup {
     const string Product="Monexus Workspace",Version=BuildVersion.Value,Id="Monexus.Workspace";
     static readonly string Root=InstallPaths.Root;
     static readonly string Shortcut=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+".lnk");
-    const string UninstallKey=@"Software\Microsoft\Windows\CurrentVersion\Uninstall\MonexusWorkspace";
+    const string UninstallKey=InstallPaths.UninstallKey;
     // IPropertyStore adds the AUMID Windows uses to associate native notifications with this shortcut.
     [StructLayout(LayoutKind.Sequential,Pack=4)] struct PropertyKey { public Guid fmtid; public uint pid; }
     [StructLayout(LayoutKind.Explicit,Size=24)] struct Variant { [FieldOffset(0)]public ushort vt;[FieldOffset(8)] public IntPtr text; }
@@ -180,7 +180,7 @@ internal static class Setup {
     }
     static void MigrateDirectory(string source,string dest,List<Action> cleanup) {
         if(!Directory.Exists(source))return;
-        // Only remove the legacy tree after publishing and verifying the D: copy.
+        // Only remove the legacy tree after publishing and verifying the copy.
         if(!Directory.Exists(dest)) {
             var staging=dest+".migrating";
             CopyTree(source,staging,true);
@@ -190,9 +190,9 @@ internal static class Setup {
     }
     static List<Action> MigrateLegacy() {
         var cleanup=new List<Action>();
-        var local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var oldRoot=Path.Combine(local,"Programs",Product);
-        var oldData=Path.Combine(local,"Monexus");
+        var oldRoot=InstallPaths.LocalRoot;
+        if(Root==oldRoot)return cleanup;
+        var oldData=InstallPaths.LocalData;
         if(Directory.Exists(oldData)) {
             InstallPaths.CheckOrdinary(oldData);
             MigrateDirectory(Path.Combine(oldData,"WebView"),InstallPaths.Profile,cleanup);
@@ -259,6 +259,6 @@ internal static class Setup {
             }
             if(!silent&&!remove&&MessageBox.Show("Open Monexus Workspace now?",Product,MessageBoxButtons.YesNo)==DialogResult.Yes)Process.Start(Shortcut);
             return 0;
-        }catch(Exception e){if(!silent)MessageBox.Show(e.Message+"\nQuit Monexus from the tray before retrying.",Product,MessageBoxButtons.OK,MessageBoxIcon.Error);else Console.Error.WriteLine(e.Message);return 1;}
+        }catch(Exception e){if(!silent)MessageBox.Show(e.Message,Product,MessageBoxButtons.OK,MessageBoxIcon.Error);else Console.Error.WriteLine(e.Message);return 1;}
     }
 }
