@@ -3,8 +3,8 @@ import {
   AssistantConnection,
   profileImage,
 } from './ConnectionSettings.jsx';
-import React, { useState } from 'react';
-import { meetingSoundEnabled, setMeetingSound } from '../meetingAudio.mjs';
+import React, { useEffect, useRef, useState } from 'react';
+import { getMeetingRingtone, meetingRingtones, meetingSoundEnabled, ringMeeting, setMeetingRingtone, setMeetingSound } from '../meetingAudio.mjs';
 import { Btn, Label, Check, Tabs, ErrorText, useJob } from '../ui.jsx';
 import {
   events,
@@ -82,12 +82,16 @@ export default function Preferences({
     [photo, setPhoto] = useState(me?.photo || ''),
     [name, setName] = useState(me?.name || ''),
     [ringtone, setRingtone] = useState(() => meetingSoundEnabled(me.id, 'ringtone')),
+    [ringtoneChoice, chooseRingtone] = useState(() => getMeetingRingtone(me.id)),
+    preview = useRef(null),
     job = useJob(),
     patch = (o) => set({ ...p, ...o });
+  useEffect(() => () => preview.current?.(), [section]);
   const save = () =>
     job.run(async () => {
       await api.command('profile.save', { name, prefs: p, photo });
       setMeetingSound(me.id, 'ringtone', ringtone);
+      setMeetingRingtone(me.id, ringtoneChoice);
       onPrefs(p);
       tell('Settings saved.');
     });
@@ -209,8 +213,19 @@ export default function Preferences({
             Play notification sounds
           </Check>
           <Check checked={ringtone} onChange={e => setRingtone(e.target.checked)}>
-            Ring for incoming meeting calls on this device
+            Ring for incoming calls and meeting starts on this device
           </Check>
+          <div className="row wrap">
+            <Label name="Meeting ringtone">
+              <select value={ringtoneChoice} onChange={e => chooseRingtone(e.target.value)}>
+                {meetingRingtones.map(tone => <option key={tone.id} value={tone.id}>{tone.name}</option>)}
+              </select>
+            </Label>
+            <Btn onClick={() => {
+              preview.current?.();
+              preview.current = ringMeeting(900, ringtoneChoice);
+            }}>Preview ringtone</Btn>
+          </div>
           <div className="form-grid">
             <Label name="Banner color">
               <select

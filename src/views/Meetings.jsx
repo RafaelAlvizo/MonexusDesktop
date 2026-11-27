@@ -22,7 +22,7 @@ import {
 import { newId } from '../../functions/core/model.mjs';
 import { desktop, nativeAction, reserveCallWindow } from '../native.mjs';
 import Call from './Call.jsx';
-import { meetingSoundEnabled, ringMeeting } from '../meetingAudio.mjs';
+import { getMeetingRingtone, meetingSoundEnabled, ringMeeting } from '../meetingAudio.mjs';
 
 const minute = 60000,
   dayKey = (d) =>
@@ -426,7 +426,7 @@ export default function Meetings({
           body: m.title,
           banner: prefs.banners !== false,
           foregroundHandled: phase === 'open',
-          sound: !m.instant && !!prefs.sound,
+          sound: phase === 'soon' && !m.instant && !!prefs.sound,
         });
       if (phase === 'open') {
         setInvite(m.id);
@@ -471,11 +471,13 @@ export default function Meetings({
     (x) => x.id === invite && !x.ended && x.end > now && (!x.instant || x.start + minute > now),
   );
   const audible = meetingSoundEnabled(me.id, 'ringtone') && !['Offline', 'Do Not Disturb'].includes(prefs.presence);
+  const ringtone = getMeetingRingtone(me.id);
   useEffect(() => {
-    if (!incoming?.instant || !audible || call || !window.AudioContext) return;
-    const duration = Math.min(30000, incoming.start + minute - Date.now() - offset.current);
-    if (duration > 0) return ringMeeting(duration);
-  }, [incoming?.id, audible, call]);
+    if (!incoming || !audible || call || !window.AudioContext) return;
+    const remaining = incoming.start + minute - Date.now() - offset.current;
+    const duration = Math.min(incoming.instant ? 30000 : 900, remaining);
+    if (duration > 0) return ringMeeting(duration, ringtone);
+  }, [incoming?.id, incoming?.start, incoming?.instant, audible, call, ringtone]);
   const history = hub && listing === 'History';
   const upcoming = rooms.filter(x => !x.ended && x.end > now);
   const agenda = history ? rooms.filter(x => x.ended || x.end <= now).reverse() :
