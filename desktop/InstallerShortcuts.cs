@@ -62,6 +62,24 @@ internal static class InstallerShortcuts {
         return Path.IsPathRooted(directory) ? Path.Combine(directory, name) : null;
     }
 
+    internal static bool IsMonexusLink(string path, string root) {
+        object link = null;
+        try {
+            link = new ShellLink();
+            ((IPersistFile)link).Load(path, 0);
+            var target = new StringBuilder(32768);
+            ((IShellLinkW)link).GetPath(target, target.Capacity, IntPtr.Zero, 4);
+            string file = target.ToString();
+            if (String.Equals(file,Path.Combine(root,"MonexusSetup.exe"),StringComparison.OrdinalIgnoreCase)) return true;
+            string parent=Path.GetDirectoryName(file);
+            return !String.IsNullOrEmpty(parent) && String.Equals(Path.GetFileName(file),"Monexus.exe",StringComparison.OrdinalIgnoreCase)
+                && String.Equals(Path.GetDirectoryName(parent),root,StringComparison.OrdinalIgnoreCase)
+                && System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(parent),@"^app-\d+\.\d+\.\d+$");
+        } catch (COMException) { return false; }
+        catch (IOException) { return false; } catch (UnauthorizedAccessException) { return false; }
+        finally { if (link != null) Marshal.ReleaseComObject(link); }
+    }
+
     internal static bool TryCreate(string path, string target, string arguments, string description, string appId) {
         if (path == null) return false;
         object link = null;

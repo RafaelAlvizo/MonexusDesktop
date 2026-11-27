@@ -1,11 +1,8 @@
 using System;
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
 using System.Reflection;
 using System.Threading;
-using System.Threading.Tasks;
-using System.Windows.Forms;
 
 internal static class WebViewPrerequisite {
     static int Run(string directory, string file, string arguments, int timeout) {
@@ -16,6 +13,30 @@ internal static class WebViewPrerequisite {
             if (!process.WaitForExit(timeout))
                 throw new IOException("Windows timed out running " + file + ". Restart Windows and run Monexus setup again.");
             return process.ExitCode;
+        }
+    }
+
+    internal sealed class StartupFailure : IOException {
+        internal readonly int Code;
+        internal StartupFailure(int code, string detail) : base(
+            "Windows could not open the local workspace (0x" + code.ToString("X8") + ")." +
+            (String.IsNullOrWhiteSpace(detail) ? "" : "\n" + detail.Trim())) { Code = code; }
+    }
+
+    internal static void VerifyStartup(string directory, bool separate, Action<string> log) {
+        var start = new ProcessStartInfo(Path.Combine(directory, "Monexus.exe"),
+            separate ? "/verify-startup /separate-profile" : "/verify-startup") {
+            UseShellExecute = false, WorkingDirectory = directory, CreateNoWindow = true, RedirectStandardOutput = true
+        };
+        using (var child = Process.Start(start)) {
+            var output = child.StandardOutput.ReadToEndAsync();
+            if (!child.WaitForExit(65000)) {
+                try { child.Kill(); child.WaitForExit(5000); } catch (InvalidOperationException) {}
+                throw new TimeoutException("Windows did not finish the startup check. Restart Windows and retry setup.");
+            }
+            string detail = output.Wait(1500) ? output.Result.Trim() : "";
+            if (detail.Length != 0) log(detail);
+            if (child.ExitCode != 0) throw new StartupFailure(child.ExitCode, detail);
         }
     }
 
@@ -42,28 +63,13 @@ internal static class WebViewPrerequisite {
             "If your PC is managed, ask IT to install the Evergreen WebView2 Runtime.\n\nMicrosoft installer code: 0x" + result.ToString("X8"));
     }
 
-    internal static void EnsureInstalled(string directory, bool silent) {
+    internal static void EnsureInstalled(string directory, Action<string> progress) {
         if (Available(directory)) return;
         string configuredRuntime = Environment.GetEnvironmentVariable("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER");
         if (!String.IsNullOrWhiteSpace(configuredRuntime))
             throw new IOException("Windows is configured to use a specific WebView2 runtime folder, but Monexus could not find a runtime there. " +
                 "Ask IT to check WEBVIEW2_BROWSER_EXECUTABLE_FOLDER.\n\n" + configuredRuntime);
-        if (silent) { Install(directory); return; }
-
-        using (var dialog = new Form {
-            Text = "Monexus Workspace", StartPosition = FormStartPosition.CenterScreen, AutoScaleMode = AutoScaleMode.Dpi,
-            FormBorderStyle = FormBorderStyle.FixedDialog, ControlBox = false, ClientSize = new Size(415, 92)
-        }) {
-            dialog.Controls.Add(new Label { Left = 16, Top = 14, AutoSize = true, Text = "Downloading and installing Microsoft Edge WebView2…" });
-            dialog.Controls.Add(new ProgressBar { Left = 16, Top = 48, Width = 383, Style = ProgressBarStyle.Marquee });
-            Exception failure = null;
-            dialog.Shown += async delegate {
-                try { await Task.Run(() => Install(directory)); }
-                catch (Exception error) { failure = error; }
-                finally { dialog.Close(); }
-            };
-            dialog.ShowDialog();
-            if (failure != null) throw failure;
-        }
+        progress("Downloading and installing Microsoft Edge WebView2. Keep this PC connected to the internet.");
+        Install(directory);
     }
 }

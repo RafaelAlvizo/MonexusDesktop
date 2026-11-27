@@ -18,6 +18,7 @@
 !/src/views/*.jsx
 !/desktop/
 !/desktop/*.cs
+!/desktop/setup.manifest
 !/desktop/icons/
 !/desktop/icons/icon.ico
 !/desktop/icons/icon.png

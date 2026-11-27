@@ -86,6 +86,22 @@ internal class WorkspaceWindow : Form {
         }
         SetProcessDPIAware();
         SetCurrentProcessExplicitAppUserModelID(AppId);
+        if (Array.Exists(args, arg => arg == "/verify-startup")) {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            bool separate = Array.Exists(args, arg => arg == "/separate-profile");
+            using (var window = new WorkspaceWindow(null)) {
+                window.Shown += async delegate { await window.VerifyStartup(separate); };
+                Application.Run(window);
+                return window.verificationResult;
+            }
+        }
+        Mutex installer;
+        if (Mutex.TryOpenExisting(InstallPaths.InstallerMutex, out installer)) {
+            installer.Dispose();
+            MessageBox.Show("Monexus setup is running. Open the workspace when setup finishes.", "Monexus Workspace");
+            return 1;
+        }
         bool first;
         using(var signal = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\Monexus.Workspace.Show", out first)) {
             if(!first) { signal.Set(); return 0; }
@@ -97,6 +113,7 @@ internal class WorkspaceWindow : Form {
     }
     WorkspaceWindow(EventWaitHandle signal) {
         showEvent=signal;Text="Monexus Workspace " + BuildVersion.Value;MinimumSize=new Size(880,600);
+        if (signal == null) { ShowInTaskbar = false; Opacity = 0; return; }
         var screen=Screen.PrimaryScreen.WorkingArea;Width=Math.Min(1440,screen.Width);Height=Math.Min(900,screen.Height);
         StartPosition=FormStartPosition.CenterScreen;Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         var menu=new ContextMenuStrip();menu.Items.Add("Open Monexus Workspace",null,delegate { RestoreWorkspace(); });menu.Items.Add("Quit Monexus Workspace",null,delegate { quitting=true;Close(); });
@@ -204,27 +221,65 @@ internal class WorkspaceWindow : Form {
         }
     }
 
-    async Task<CoreWebView2Environment> OpenWorkspaceProfile() {
-        string profile = InstallPaths.Profile;
-        string recovery = profile + "-Recovery", marker = recovery + ".active";
-        bool managedFolder = !String.IsNullOrEmpty(Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER"));
-        bool usingRecovery = !managedFolder && File.Exists(marker);
-        string current = usingRecovery ? recovery : profile;
+    async Task<CoreWebView2Environment> OpenProfileWithRetry(string current) {
         try { return await OpenProfile(current); }
         catch (Exception error) { if (!ProfileConflict(error)) throw; }
-
-        // The previous browser process can still be releasing this profile after an update.
         await Task.Delay(1800);
-        try { return await OpenProfile(current); }
+        return await OpenProfile(current);
+    }
+
+    async Task<CoreWebView2Environment> OpenWorkspaceProfile() {
+        string current = InstallPaths.SelectedProfile();
+        string recovery = InstallPaths.Profile + "-Recovery";
+        try { return await OpenProfileWithRetry(current); }
         catch (Exception error) {
-            if (!ProfileConflict(error) || usingRecovery || managedFolder) throw;
+            if (!ProfileConflict(error) || current != InstallPaths.Profile || InstallPaths.HasFolderOverride()) throw;
             if (MessageBox.Show(this, "WebView2 still cannot open your Monexus profile. Try a separate profile? " +
                 "Your existing profile will be kept. You may need to sign in again.", Text,
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) throw;
         }
         var env = await OpenProfile(recovery);
-        File.WriteAllText(marker, "");
+        File.WriteAllText(recovery + ".active", "");
         return env;
+    }
+
+    int verificationResult = 1;
+    async Task VerifyStartup(bool separate) {
+        string step = "Open the WebView2 profile";
+        try {
+            Console.WriteLine("WebView2 " + CoreWebView2Environment.GetAvailableBrowserVersionString(null));
+            string profile = separate ? InstallPaths.SeparateProfile : InstallPaths.SelectedProfile();
+            string overridden = Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER");
+            string folder = InstallPaths.HasFolderOverride() ? overridden : profile;
+            if (!String.IsNullOrEmpty(folder) && Path.IsPathRooted(folder)) {
+                if (File.Exists(folder)) throw new IOException("The WebView2 profile location points to a file. A writable folder is required.");
+                Directory.CreateDirectory(folder);
+                using (new FileStream(Path.Combine(folder, ".monexus-check-" + Guid.NewGuid().ToString("N")),
+                    FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.DeleteOnClose)) {}
+            }
+            var env = await OpenProfileWithRetry(profile);
+            Console.WriteLine("Opened WebView2 " + env.BrowserVersionString);
+            step = "Render the installed workspace";
+            var core = view.CoreWebView2;
+            ConfigureView(core);
+            const string url = Origin + "/index.html?setup-check=1";
+            var ready = new TaskCompletionSource<bool>();
+            core.WebMessageReceived += (s,e) => {
+                if (e.Source == url && e.WebMessageAsJson == "\"monexus-setup-ready\"") ready.TrySetResult(true);
+            };
+            core.NavigationCompleted += (s,e) => {
+                if (!e.IsSuccess) ready.TrySetException(new IOException("Navigation failed: " + e.WebErrorStatus));
+            };
+            core.ProcessFailed += (s,e) => ready.TrySetException(new IOException("WebView2 process failed: " + e.ProcessFailedKind));
+            core.Navigate(url);
+            if (await Task.WhenAny(ready.Task, Task.Delay(25000)) != ready.Task)
+                throw new TimeoutException("The bundled workspace did not finish rendering.");
+            await ready.Task;
+            verificationResult = 0;
+        } catch (Exception error) {
+            verificationResult = ProfileConflict(error) ? unchecked((int)0x8007139F) : error.GetBaseException().HResult;
+            Console.WriteLine(step + ": " + error.GetBaseException().Message);
+        } finally { Close(); }
     }
 
     async void StartWebView(object sender,EventArgs args) {

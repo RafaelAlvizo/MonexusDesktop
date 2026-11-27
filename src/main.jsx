@@ -713,4 +713,10 @@ function App() {
     </div>
   );
 }
-createRoot(document.getElementById('root')).render(<App />);
+function SetupCheck() {
+  useEffect(() => { window.chrome?.webview?.postMessage('monexus-setup-ready'); }, []);
+  return <main>Monexus Workspace</main>;
+}
+createRoot(document.getElementById('root')).render(
+  windowParams.get('setup-check') === '1' ? <SetupCheck /> : <App />,
+);

@@ -9,12 +9,39 @@ internal static class InstallPaths {
     // Exit code used only by the staged host's /check-webview prerequisite check.
     internal const int RuntimeMissing = 20;
     static readonly SecurityIdentifier User = WindowsIdentity.GetCurrent().User;
+    internal static readonly string InstallerMutex = @"Local\MonexusWorkspaceInstaller-" + User.Value;
     internal const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\MonexusWorkspace";
     static readonly string Local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
     internal static readonly string LocalRoot = Path.Combine(Local, "Programs", "Monexus Workspace");
     internal static readonly string LocalData = Path.Combine(Local, "Monexus");
     internal static readonly string Root = FindRoot();
     internal static readonly string Profile = Path.Combine(Root == LocalRoot ? LocalData : Root, "WebView");
+    internal static readonly string SeparateProfile = Path.Combine(Path.GetDirectoryName(Profile), "StartupHelp", "SeparateProfile");
+
+    internal static bool HasFolderOverride() { return FolderOverrideSource() != null; }
+    internal static string FolderOverrideSource() {
+        if (!String.IsNullOrEmpty(Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER"))) return "WEBVIEW2_USER_DATA_FOLDER";
+        try {
+            foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
+                foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+                    using (var root = RegistryKey.OpenBaseKey(hive, view))
+                    using (var key = root.OpenSubKey(@"Software\Policies\Microsoft\Edge\WebView2\UserDataFolder")) {
+                        if (key == null) continue;
+                        foreach (var app in new[] { "Monexus.Workspace", "Monexus.exe", "*" })
+                            if (!String.IsNullOrEmpty(key.GetValue(app) as string)) return hive + " " + view + " UserDataFolder for " + app;
+                    }
+        } catch (System.Security.SecurityException) { return "Windows policy access restricted"; }
+        catch (UnauthorizedAccessException) { return "Windows policy access restricted"; }
+        return null;
+    }
+
+    internal static string SelectedProfile() {
+        if (HasFolderOverride()) return Profile;
+        using (var key = Registry.CurrentUser.OpenSubKey(UninstallKey)) {
+            if (key != null && Equals(key.GetValue("UseSeparateProfile"), 1)) return SeparateProfile;
+        }
+        return File.Exists(Profile + "-Recovery.active") ? Profile + "-Recovery" : Profile;
+    }
 
     internal static void StartInstalledExecutable(string executable, string arguments) {
         using (Process.Start(new ProcessStartInfo(executable, arguments) {

@@ -23,6 +23,7 @@ internal static class Setup {
     const string UninstallKey=InstallPaths.UninstallKey;
     [DllImport("shell32.dll")] static extern void SHChangeNotify(int eventId,uint flags,IntPtr item1,IntPtr item2);
     static readonly string UpdateShortcut=InstallerShortcuts.PathFor(Environment.SpecialFolder.DesktopDirectory, "Update Monexus Workspace.lnk");
+    static readonly string DesktopShortcut=InstallerShortcuts.PathFor(Environment.SpecialFolder.DesktopDirectory, Product+".lnk");
     const string InstallerName = "Monexus-Workspace-Setup-x64.exe";
     static Version InstallerVersion(string path) {
         if (String.IsNullOrEmpty(path) || !File.Exists(path)) return null;
@@ -185,41 +186,139 @@ internal static class Setup {
         cleanup.Add(delegate { if(Directory.GetFileSystemEntries(oldRoot).Length==0)Directory.Delete(oldRoot); });
         return cleanup;
     }
-    static string Install(bool silent) {
+    static string WithInstallerLock(Func<string> operation) {
+        using (var guard = new System.Threading.Mutex(false, InstallPaths.InstallerMutex)) {
+            bool acquired;
+            try { acquired = guard.WaitOne(0); } catch (System.Threading.AbandonedMutexException) { acquired = true; }
+            if (!acquired) throw new IOException("Another Monexus installer is already running. Finish that setup, then retry.");
+            try { return operation(); } finally { guard.ReleaseMutex(); }
+        }
+    }
+
+    internal static string Install(SetupOptions options, SetupReport report, Action<int,string> changed) {
+        return WithInstallerLock(() => InstallFiles(options, report, (step, text) => { report.Write(text); changed(step, text); }));
+    }
+
+    static void PrepareAppDirectory(string directory, string root, Stack<Action> rollback) {
+        if (!String.Equals(directory, root, StringComparison.OrdinalIgnoreCase))
+            PrepareAppDirectory(Path.GetDirectoryName(directory), root, rollback);
+        if (!Directory.Exists(directory)) {
+            Directory.CreateDirectory(directory);
+            rollback.Push(() => Directory.Delete(directory, false));
+        }
+        InstallPaths.CheckOrdinary(directory);
+    }
+
+    static string InstallFiles(SetupOptions options, SetupReport report, Action<int,string> progress) {
+        progress(0, "Checking your installation folder and running apps.");
         if(Process.GetProcessesByName("Monexus").Any(p=>p.SessionId==Process.GetCurrentProcess().SessionId))
             throw new IOException("Save your work and choose Quit Monexus Workspace in the system tray before installing.");
+        using (var key = Registry.CurrentUser.OpenSubKey(UninstallKey)) {
+            Version existing;
+            if (key != null && System.Version.TryParse(key.GetValue("DisplayVersion") as string, out existing) && existing > new Version(Version))
+                throw new IOException("A newer version is already installed. Use the latest Monexus installer.");
+        }
         InstallPaths.EnsureRoot();
         var temp=Path.Combine(Root,"Staging-"+Guid.NewGuid().ToString("N"));
+        var staged = Path.Combine(temp, "app");
+        var backups = Path.Combine(temp, "backup");
+        var versionDir = Path.Combine(Root, "app-" + Version);
+        var rollback = new Stack<Action>();
+        bool keepBackup = false, verified = false;
         try {
-            Directory.CreateDirectory(temp);using(var s=Assembly.GetExecutingAssembly().GetManifestResourceStream("payload"))using(var z=new ZipArchive(s,ZipArchiveMode.Read))z.ExtractToDirectory(temp);
-            WebViewPrerequisite.EnsureInstalled(temp, silent);
-            var versionDir=Path.Combine(Root,"app-"+Version);Directory.CreateDirectory(versionDir);
-            foreach(var name in PayloadNames()){var dest=Path.Combine(versionDir,name);Directory.CreateDirectory(Path.GetDirectoryName(dest));File.Copy(Path.Combine(temp,name),dest,true);}
-            string exe=Path.Combine(versionDir,"Monexus.exe"),setup=Path.Combine(Root,"MonexusSetup.exe");
-            if(!String.Equals(Application.ExecutablePath,setup,StringComparison.OrdinalIgnoreCase))File.Copy(Application.ExecutablePath,setup,true);
+            Directory.CreateDirectory(staged);
+            using(var s=Assembly.GetExecutingAssembly().GetManifestResourceStream("payload"))
+            using(var z=new ZipArchive(s,ZipArchiveMode.Read)) z.ExtractToDirectory(staged);
+            progress(1, "Checking Microsoft Edge WebView2.");
+            WebViewPrerequisite.EnsureInstalled(staged, text => progress(1, text));
             var cleanup=MigrateLegacy();
+            progress(2, "Installing and verifying workspace files.");
+            using(var s=Assembly.GetExecutingAssembly().GetManifestResourceStream("payload"))
+            using(var zip=new ZipArchive(s,ZipArchiveMode.Read))
+            using(var hash=SHA256.Create()) {
+                foreach(var entry in zip.Entries) {
+                    if (entry.Name.Length == 0) continue;
+                    string name=entry.FullName.Replace('/','\\');
+                    string src=Path.Combine(staged,name), dest=Path.Combine(versionDir,name);
+                    string backup=Path.Combine(backups,name);
+                    PrepareAppDirectory(Path.GetDirectoryName(dest),versionDir,rollback);
+                    if (File.Exists(dest)) {
+                        InstallPaths.CheckOrdinary(dest);
+                        Directory.CreateDirectory(Path.GetDirectoryName(backup));
+                        File.Replace(src,dest,backup);
+                        rollback.Push(() => File.Replace(backup,dest,null));
+                    } else {
+                        File.Move(src,dest);
+                        rollback.Push(() => File.Delete(dest));
+                    }
+                    using(var original=entry.Open())
+                        if (!Digest(dest).SequenceEqual(hash.ComputeHash(original))) throw new IOException("File verification failed for "+name+".");
+                }
+            }
+            progress(3, "Opening a test window and loading the installed workspace.");
+            string folderPolicy = InstallPaths.FolderOverrideSource();
+            report.Write("Profile: " + (folderPolicy != null ? folderPolicy :
+                options.Separate || InstallPaths.SelectedProfile() == InstallPaths.SeparateProfile ? "separate" :
+                InstallPaths.SelectedProfile() == InstallPaths.Profile ? "original" : "recovery"));
+            foreach (var setting in new[] { "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS" })
+                if (!String.IsNullOrEmpty(Environment.GetEnvironmentVariable(setting))) report.Write("Configured: " + setting);
+            WebViewPrerequisite.VerifyStartup(versionDir, options.Separate, report.Write);
+            verified = true;
+            progress(4, "Registering Monexus and applying your shortcut choices.");
+            string exe=Path.Combine(versionDir,"Monexus.exe"),setup=Path.Combine(Root,"MonexusSetup.exe");
+            if(!String.Equals(Application.ExecutablePath,setup,StringComparison.OrdinalIgnoreCase)) {
+                string next=Path.Combine(temp,"NextSetup.exe");
+                File.Copy(Application.ExecutablePath,next);
+                if(File.Exists(setup)) File.Replace(next,setup,null); else File.Move(next,setup);
+            }
             var missing = new List<string>();
             if (!InstallerShortcuts.TryCreate(Shortcut, exe, "", Product, Id)) missing.Add("Start menu shortcut");
-            if (!InstallerShortcuts.TryCreate(UpdateShortcut, setup, "/update", "Check for a Monexus Workspace update", null)) missing.Add("desktop update shortcut");
+            ApplyShortcut(DesktopShortcut, options.Desktop, exe, "", "Monexus Workspace", Id, missing);
+            ApplyShortcut(UpdateShortcut, options.UpdateDesktop, setup, "/update", "Update Monexus Workspace", null, missing);
             using(var k=Registry.CurrentUser.CreateSubKey(@"Software\Classes\AppUserModelId\"+Id)){k.SetValue("DisplayName",Product);k.SetValue("CustomActivator","{DC295354-75BA-4CEC-849B-1768E030278B}");k.SetValue("IconUri",Path.Combine(versionDir,"Monexus.png"));}
             using(var k=Registry.CurrentUser.CreateSubKey(@"Software\Classes\monexus-workspace")){k.SetValue("","URL:Monexus Workspace");k.SetValue("URL Protocol","");using(var action=k.CreateSubKey(@"shell\open\command"))action.SetValue("","\""+exe+"\"");}
-            using(var k=Registry.CurrentUser.CreateSubKey(UninstallKey)){k.SetValue("DisplayName",Product);k.SetValue("DisplayVersion",Version);k.SetValue("UpdateSource",setup);k.SetValue("Publisher","Monexus");k.SetValue("DisplayIcon",exe);k.SetValue("InstallLocation",Root);k.SetValue("UninstallString","\""+setup+"\" /uninstall");}
-            foreach(var finish in cleanup)finish();
+            using(var k=Registry.CurrentUser.CreateSubKey(UninstallKey)){
+                k.SetValue("DisplayName",Product);k.SetValue("DisplayVersion",Version);k.SetValue("UpdateSource",setup);k.SetValue("Publisher","Monexus");k.SetValue("DisplayIcon",exe);k.SetValue("InstallLocation",Root);k.SetValue("UninstallString","\""+setup+"\" /uninstall");
+                k.SetValue("DesktopShortcut",options.Desktop ? 1 : 0);k.SetValue("UpdateShortcut",options.UpdateDesktop ? 1 : 0);
+                if(options.Separate) k.SetValue("UseSeparateProfile",1);
+            }
+            foreach(var finish in cleanup) {
+                try { finish(); } catch(IOException ex) { report.Write("Legacy cleanup: " + ex.Message); }
+                catch(UnauthorizedAccessException ex) { report.Write("Legacy cleanup: " + ex.Message); }
+            }
             SHChangeNotify(0x08000000,0,IntPtr.Zero,IntPtr.Zero);
-            return missing.Count == 0 ? "" : "Windows could not add the " + String.Join(" and ", missing) +
-                ". You can open Monexus here:\n" + exe + "\n\n";
+            return missing.Count == 0 ? "" : "Windows could not apply these shortcut choices: " + String.Join(", ", missing) + ".";
+        } catch {
+            if (!verified) while (rollback.Count > 0) {
+                try { rollback.Pop()(); }
+                catch (Exception error) { keepBackup = true; report.Write("Restore failed: " + error.Message + ". Backup: " + backups); }
+            }
+            throw;
         } finally {
             // An unfinished Windows prerequisite installer can still hold a staging file.
-            try { if (Directory.Exists(temp)) Directory.Delete(temp, true); }
+            try { if (!keepBackup && Directory.Exists(temp)) Directory.Delete(temp, true); }
             catch (IOException) {}
             catch (UnauthorizedAccessException) {}
+        }
+    }
+    static void ApplyShortcut(string path, bool wanted, string target, string arguments, string label, string appId, List<string> missing) {
+        if (File.Exists(path) && !InstallerShortcuts.IsMonexusLink(path,Root)) {
+            if (wanted) missing.Add(label);
+            return;
+        }
+        if (wanted) {
+            if (!InstallerShortcuts.TryCreate(path,target,arguments,label,appId)) missing.Add(label);
+        } else if (File.Exists(path)) {
+            try { File.Delete(path); }
+            catch (IOException) { missing.Add(label); } catch (UnauthorizedAccessException) { missing.Add(label); }
         }
     }
     static void Uninstall(){
         var app=Path.Combine(Root,"app-"+Version);
         foreach(var name in PayloadNames()){var f=Path.Combine(app,name);if(File.Exists(f))File.Delete(f);}
         if(Directory.Exists(app)){var dirs=Directory.GetDirectories(app,"*",SearchOption.AllDirectories);Array.Sort(dirs,(a,b)=>b.Length.CompareTo(a.Length));foreach(var d in dirs)if(Directory.GetFileSystemEntries(d).Length==0)Directory.Delete(d);if(Directory.GetFileSystemEntries(app).Length==0)Directory.Delete(app);}
-        if(File.Exists(UpdateShortcut))File.Delete(UpdateShortcut);
+        if(File.Exists(UpdateShortcut) && InstallerShortcuts.IsMonexusLink(UpdateShortcut,Root))File.Delete(UpdateShortcut);
+        if(File.Exists(DesktopShortcut) && InstallerShortcuts.IsMonexusLink(DesktopShortcut,Root))File.Delete(DesktopShortcut);
         if(File.Exists(Shortcut))File.Delete(Shortcut);Registry.CurrentUser.DeleteSubKeyTree(UninstallKey,false);Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\AppUserModelId\"+Id,false);Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\monexus-workspace",false);
         var installedSetup=Path.Combine(Root,"MonexusSetup.exe");if(File.Exists(installedSetup)&&!String.Equals(installedSetup,Application.ExecutablePath,StringComparison.OrdinalIgnoreCase))File.Delete(installedSetup);
         if(Directory.Exists(Root)&&Directory.GetFileSystemEntries(Root).Length==0)Directory.Delete(Root);
@@ -228,28 +327,26 @@ internal static class Setup {
         bool silent=Array.Exists(args,a=>a.Equals("/quiet",StringComparison.OrdinalIgnoreCase)),remove=Array.Exists(args,a=>a.Equals("/uninstall",StringComparison.OrdinalIgnoreCase));
         Application.EnableVisualStyles();
         if(Array.Exists(args,a=>a.Equals("/update",StringComparison.OrdinalIgnoreCase))){ShowUpdate();return 0;}
-        if(!silent&&MessageBox.Show(remove?"Uninstall Monexus Workspace for this user?":"Install Monexus Workspace for this user?",Product,MessageBoxButtons.OKCancel,MessageBoxIcon.Information)!=DialogResult.OK)return 0;
+        if(remove&&!silent&&MessageBox.Show("Uninstall Monexus Workspace for this user?",Product,MessageBoxButtons.OKCancel,MessageBoxIcon.Question)!=DialogResult.OK)return 0;
         try{
             if(remove&&String.Equals(Application.ExecutablePath,Path.Combine(Root,"MonexusSetup.exe"),StringComparison.OrdinalIgnoreCase)){
                 string helper=Path.Combine(Root,"Monexus-Uninstall-"+Guid.NewGuid().ToString("N")+".exe");File.Copy(Application.ExecutablePath,helper);
                 Process.Start(helper,"/uninstall /quiet /wait:"+Process.GetCurrentProcess().Id);return 0;
             }
             foreach(string a in args)if(a.StartsWith("/wait:")){int pid;if(Int32.TryParse(a.Substring(6),out pid))try{Process.GetProcessById(pid).WaitForExit(10000);}catch(ArgumentException){}}
-            string shortcutNote = "";
-            using(var guard=new System.Threading.Mutex(false,@"Local\MonexusWorkspaceInstaller-"+System.Security.Principal.WindowsIdentity.GetCurrent().User.Value)){
-                bool acquired;
-                try{acquired=guard.WaitOne(0);}catch(System.Threading.AbandonedMutexException){acquired=true;}
-                if(!acquired)throw new IOException("Another Monexus installer is already running.");
-                try{if(remove)Uninstall();else shortcutNote = Install(silent);}finally{guard.ReleaseMutex();}
+            if (remove) { WithInstallerLock(() => { Uninstall(); return ""; }); return 0; }
+            var options = new SetupOptions(args, silent, UpdateShortcut);
+            var report = new SetupReport();
+            if (!silent) using (var wizard = new SetupWizard(options, report, InstalledApp)) {
+                Application.Run(wizard);
+                return wizard.Result;
             }
-            if (silent && shortcutNote.Length > 0) Console.Error.WriteLine(shortcutNote);
-            if (!silent && !remove && MessageBox.Show(shortcutNote + "Open Monexus Workspace now?", Product, MessageBoxButtons.YesNo) == DialogResult.Yes) {
-                try { InstallPaths.StartInstalledExecutable(InstalledApp, ""); }
-                catch (System.ComponentModel.Win32Exception error) {
-                    MessageBox.Show("Monexus was installed, but Windows could not start it.\n\n" + InstalledApp +
-                        "\n\n" + error.Message, Product, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return 1;
-                }
+            try {
+                string note = Install(options, report, (step, detail) => {});
+                report.Write("Installation verified. " + note);
+                if (note.Length != 0) Console.Error.WriteLine(note);
+            } catch (Exception error) {
+                report.Failure(error); Console.Error.WriteLine("Setup report: " + report.FileName); throw;
             }
             return 0;
         }catch(Exception e){if(!silent)MessageBox.Show(e.Message,Product,MessageBoxButtons.OK,MessageBoxIcon.Error);else Console.Error.WriteLine(e.Message);return 1;}

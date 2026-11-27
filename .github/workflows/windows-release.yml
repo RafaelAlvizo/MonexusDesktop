@@ -33,7 +33,8 @@ jobs:
           $updater = Join-Path $root 'MonexusSetup.exe'
           $startLink = Join-Path ([Environment]::GetFolderPath('Programs')) 'Monexus Workspace.lnk'
           $updateLink = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Update Monexus Workspace.lnk'
-          foreach ($path in $app, $updater, $startLink, $updateLink) {
+          $deskLink = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Monexus Workspace.lnk'
+          foreach ($path in $app, $updater, $startLink, $updateLink, $deskLink) {
             if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Setup did not create $path" }
           }
           $probe = Start-Process -FilePath $app -ArgumentList '/check-webview' -WindowStyle Hidden -Wait -PassThru
@@ -41,12 +42,37 @@ jobs:
           $env:WEBVIEW2_BROWSER_EXECUTABLE_FOLDER = Join-Path $env:RUNNER_TEMP 'missing-webview2'
           $missing = Start-Process -FilePath $app -ArgumentList '/check-webview' -WindowStyle Hidden -Wait -PassThru
           if ($missing.ExitCode -ne 20) { throw "Expected the missing-runtime result, received $($missing.ExitCode)" }
+          Remove-Item Env:WEBVIEW2_BROWSER_EXECUTABLE_FOLDER
           $shell = New-Object -ComObject WScript.Shell
           $update = $shell.CreateShortcut($updateLink)
           if ($shell.CreateShortcut($startLink).TargetPath -ine [IO.Path]::GetFullPath($app) -or
+              $shell.CreateShortcut($deskLink).TargetPath -ine [IO.Path]::GetFullPath($app) -or
               $update.TargetPath -ine [IO.Path]::GetFullPath($updater) -or $update.Arguments -ne '/update') {
             throw 'Installed shortcuts point to the wrong target.'
           }
+          $sample = Join-Path (Split-Path $app) 'MediaPipe-LICENSE.txt'
+          $original = (Get-FileHash $sample).Hash
+          Add-Content $sample 'Setup repair fixture'
+          $before = (Get-FileHash $sample).Hash
+          $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:RUNNER_TEMP 'unusable-profile-file'
+          Set-Content -LiteralPath $env:WEBVIEW2_USER_DATA_FOLDER 'fixture'
+          $failed = Start-Process $installer -ArgumentList '/quiet /nodesktop /no-update-shortcut' -WindowStyle Hidden -Wait -PassThru
+          if ($failed.ExitCode -eq 0 -or (Get-FileHash $sample).Hash -ne $before -or !(Test-Path $deskLink)) {
+            throw 'A failed startup check must restore the previous files and shortcuts.'
+          }
+          Remove-Item Env:WEBVIEW2_USER_DATA_FOLDER
+          foreach ($arguments in '/quiet /nodesktop /no-update-shortcut','/quiet') {
+            $repair = Start-Process $installer -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
+            if ($repair.ExitCode -ne 0 -or (Get-FileHash $sample).Hash -ne $original -or
+                (Test-Path $deskLink) -or (Test-Path $updateLink) -or !(Test-Path $startLink)) {
+              throw 'Repair failed to restore the file or remember shortcut choices.'
+            }
+          }
+      - name: Read setup reports if verification fails
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem "$env:LOCALAPPDATA/Monexus/Setup logs" -Filter '*.txt' -ErrorAction SilentlyContinue | Get-Content
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer

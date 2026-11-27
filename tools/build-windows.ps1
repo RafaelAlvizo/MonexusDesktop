@@ -54,6 +54,6 @@ $payload = Join-Path $output ('payload-' + [guid]::NewGuid().ToString('N') + '.z
 [IO.Compression.ZipFile]::CreateFromDirectory($stage,$payload,[IO.Compression.CompressionLevel]::Optimal,$false)
 $installer = Join-Path $release 'Monexus-Workspace-Setup-x64.exe'
 $setupArgs = @("/out:$installer",$versionSource,'/r:System.Web.Extensions.dll',"/resource:$payload,payload",'/r:Microsoft.CSharp.dll','/r:System.IO.Compression.dll','/r:System.IO.Compression.FileSystem.dll',"$rootPath\desktop\Setup.cs")
-& $compiler @baseArgs @setupArgs "/resource:$bootstrapper,webview2-installer" (Join-Path $rootPath 'desktop\InstallPaths.cs') (Join-Path $rootPath 'desktop\InstallerShortcuts.cs') (Join-Path $rootPath 'desktop\WebViewPrerequisite.cs')
+& $compiler @baseArgs @setupArgs "/resource:$bootstrapper,webview2-installer" "/win32manifest:$rootPath\desktop\setup.manifest" (Join-Path $rootPath 'desktop\InstallPaths.cs') (Join-Path $rootPath 'desktop\InstallerShortcuts.cs') (Join-Path $rootPath 'desktop\WebViewPrerequisite.cs') (Join-Path $rootPath 'desktop\SetupWizard.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
 Get-Item $installer | Select-Object FullName,Length
