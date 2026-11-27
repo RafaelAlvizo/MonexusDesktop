@@ -1,0 +1,184 @@
+.wb-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  padding: 12px;
+  box-sizing: border-box;
+}
+.wb-editor {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  isolation: isolate;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.wb-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.wb-surface {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  user-select: none;
+  background-color: var(--bg, var(--paper));
+  background-image: radial-gradient(var(--line) 1px, transparent 1.3px);
+}
+.wb-surface.tool-hand {
+  cursor: grab;
+}
+.wb-surface.tool-hand:active {
+  cursor: grabbing;
+}
+.wb-surface:not(.tool-hand):not(.tool-select) {
+  cursor: crosshair;
+}
+.wb-object {
+  fill: var(--paper);
+  cursor: inherit;
+}
+.wb-object polyline {
+  fill: none;
+}
+.tool-select .wb-object {
+  cursor: move;
+}
+.wb-object.selected {
+  stroke-width: 3.5;
+  filter: drop-shadow(0 0 2px #779cc888);
+}
+.wb-label {
+  height: 100%;
+  display: grid;
+  align-content: center;
+  text-align: center;
+  white-space: pre-wrap;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.15;
+  font-size: 13px;
+  color: var(--ink);
+  padding: 2px;
+}
+.wb-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.wb-header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-header small {
+  color: var(--dim);
+  margin-right: auto;
+}
+.wb-tools,
+.wb-style,
+.wb-zoom,
+.wb-hint {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  box-shadow: 0 2px 8px #0002;
+}
+.wb-tools {
+  left: 8px;
+  top: 8px;
+  flex-flow: column;
+  max-height: calc(100% - 16px);
+  overflow: auto;
+}
+.wb-style {
+  right: 8px;
+  top: 8px;
+}
+.wb-zoom {
+  right: 8px;
+  bottom: 8px;
+}
+.wb-zoom span {
+  font-size: 12px;
+  min-width: 36px;
+  text-align: center;
+}
+.wb-hint {
+  bottom: 8px;
+  left: 8px;
+  color: var(--ink);
+}
+.wb-style input[type='color'] {
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+}
+.wb-style select {
+  width: 92px;
+  height: 28px;
+  font-size: 12px;
+}
+.wb-tools button,
+.wb-style button,
+.wb-zoom button,
+.wb-header > button:first-child {
+  display: inline-grid;
+  place-items: center;
+  min-width: 30px;
+  height: 30px;
+  border-radius: 5px;
+  padding: 3px 5px;
+  color: var(--ink);
+}
+.wb-tools button:hover,
+.wb-zoom button:hover,
+.wb-tools [aria-pressed='true'] {
+  background: var(--tint, var(--line));
+}
+.wb-library {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(195px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.wb-library button {
+  display: grid;
+  text-align: left;
+  gap: 8px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 16px;
+  border-radius: 8px;
+  color: var(--ink);
+}
+.wb-library small,
+.wb-library svg {
+  color: var(--dim);
+}
+.meeting-stage .wb-editor {
+  flex: 1;
+  min-height: 0;
+}
+.wb-loading {
+  margin: auto;
+  color: var(--dim);
+}

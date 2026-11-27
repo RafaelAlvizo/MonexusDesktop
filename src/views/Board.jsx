@@ -30,7 +30,7 @@ import {
 import {
   Avatar,
   Btn,
-  IconButton,
+  IconButton, Modal,
   Empty,
   ErrorText,
   humanError,
@@ -38,7 +38,7 @@ import {
 } from '../ui.jsx';
 const Ticket = lazy(() => import('./Ticket.jsx')),
   Config = lazy(() => import('./BoardConfig.jsx'));
-function TicketCard({ t, board, members, open, canMove }) {
+function TicketCard({ t, board, members, open, canMove, menu }) {
   const fields = board.fields.filter(
       (f) => f.enabled && f.card && !empty(t.values[f.key]),
     ),
@@ -48,15 +48,7 @@ function TicketCard({ t, board, members, open, canMove }) {
     <button
       type="button"
       className="ticket-card"
-      onContextMenu={(e) =>
-        quickMenu(e, [
-          { label: 'Open ticket', run: () => open(t) },
-          {
-            label: 'Copy ticket ID',
-            run: () => navigator.clipboard.writeText(ticketKey(board, t)),
-          },
-        ])
-      }
+      onContextMenu={e => menu(e,t)}
       draggable={canMove}
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', t.id);
@@ -168,6 +160,15 @@ export default function Board({
   tell,
   onProfile,
 }) {
+  const [deleting, setDeleting] = useState(null);
+  const deletion = useJob();
+  function ticketMenu(e,t) {
+    quickMenu(e, [
+      {label:'Open ticket',run:()=>edit({t})},
+      {label:'Copy ticket ID',run:()=>navigator.clipboard.writeText(ticketKey(board,t))},
+      isAdmin(me) && {label:'Delete ticket',run:()=>setDeleting({board:board.id,t})},
+    ]);
+  }
   const [backlog, showBacklog] = useState(false);
   const [viewers, setViewers] = useState([]);
   useEffect(
@@ -573,7 +574,7 @@ export default function Board({
                       {items.map((t) => (
                         <TicketCard
                           key={t.id}
-                          {...{ t, board, members, canMove }}
+                          {...{ t, board, members, canMove }} menu={ticketMenu}
                           open={(t) => edit({ t })}
                         />
                       ))}
@@ -604,7 +605,7 @@ export default function Board({
                 </thead>
                 <tbody>
                   {visible.map((t) => (
-                    <tr key={t.id}>
+                    <tr key={t.id} onContextMenu={e => ticketMenu(e,t)}>
                       <td>
                         <button
                           className="table-ticket"
@@ -653,7 +654,15 @@ export default function Board({
         </div>
       )}
       <Suspense fallback={null}>
-        {config && (
+        {deleting && <Modal title="Delete ticket?" onClose={() => !deletion.busy && setDeleting(null)}>
+        <div className="form-body"><p>Delete "{deleting.t.values.title}" and its attachments from this board?</p><ErrorText error={deletion.error}/></div>
+        <footer><Btn autoFocus onClick={() => setDeleting(null)} disabled={deletion.busy}>Cancel</Btn>
+        <Btn kind="danger" disabled={deletion.busy} onClick={() => deletion.run(async () => {
+          await api.command('ticket.delete',{board:deleting.board,ticket:deleting.t.id,rev:deleting.t.rev});
+          setDeleting(null); tell('Ticket deleted.');
+        })}>Delete ticket</Btn></footer>
+      </Modal>}
+      {config && (
           <Config
             {...{ api, me, members, board: config === 'new' ? null : board }}
             onClose={() => setConfig('')}

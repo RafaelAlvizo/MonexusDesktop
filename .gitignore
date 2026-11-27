@@ -9,6 +9,7 @@
 !/src/*.jsx
 !/src/*.mjs
 !/src/style.css
+!/src/whiteboard.css
 !/src/call.css
 !/src/models/
 !/src/models/selfie_segmenter_landscape.tflite

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { attachmentType } from '../src/attachmentTypes.mjs';
 import { callVideo } from '../src/callVideo.mjs';
 import {
-  boardTemplate,
+  boardTemplate, withPause, updateTicketTimer,
   channelAllows,
   figmaEmbed,cleanAcl,mayContribute,
 } from '../functions/core/model.mjs';
@@ -118,4 +118,30 @@ test('resource contribution policies distinguish roles, members and individual a
   assert.equal(mayContribute({},'notes',member),true);
   assert.equal(mayContribute(policy,'docs',{...member,active:false}),false);
   assert.equal(mayContribute({docs:cleanAcl({everyone:true,exclude:['alice']})},'docs',member),false);
+});
+
+
+test('existing boards gain Pause once and only active timing resumes after a pause', () => {
+  const board = boardTemplate();
+  const legacy = board.columns.filter(c => c.id !== 'pause');
+  assert.deepEqual(withPause(withPause(legacy)), board.columns);
+  board.timing = { start:'doing', finish:'done', since:100 };
+  let ticket;
+  function move(column,now) {
+    const timer=updateTicketTimer(board,ticket,column,now);
+    ticket={column,timer,updatedAt:now};
+    return timer;
+  }
+  assert.equal(move('pause',110).running,null);
+  assert.equal(move('review',120).running,null);
+  assert.equal(move('doing',130).running,130);
+  assert.equal(move('pause',170).elapsed,40);
+  assert.equal(move('pause',500).elapsed,40);
+  assert.equal(move('review',600).running,600);
+  assert.equal(move('pause',630).elapsed,70);
+  assert.equal(move('done',800).paused,false);
+  assert.equal(move('review',820).running,null);
+  assert.equal(move('doing',900).running,900);
+  assert.equal(move('done',930).elapsed,100);
+  assert.equal(updateTicketTimer(board,{column:'doing',updatedAt:80},'pause',150).elapsed,50);
 });

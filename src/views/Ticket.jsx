@@ -71,7 +71,7 @@ function RecordedTime({ board, ticket, 'aria-labelledby': labelId }) {
       <small>
         {since !== null
           ? 'Recording until ' + column(tracking.finish)
-          : 'Automatic · ' +
+          : timer?.paused ? 'Paused' : 'Automatic · ' +
             column(tracking.start) +
             ' → ' +
             column(tracking.finish)}

@@ -115,3 +115,14 @@
 .share-sources button[aria-pressed=true] {color:var(--call-green);background:#283c31;}
 .shared-content .presentation-video {width:100%;flex:1;min-height:0;max-height:none;aspect-ratio:auto;background:#101214;border-radius:0;}
 .presentation-video > video {object-fit:contain;}
+.wb-call-actions{display:flex;justify-content:center;gap:6px;flex-wrap:wrap;}
+.wb-call-actions button{font-size:12px;color:#e7eeea;background:#2e3733;padding:4px 8px;border-radius:4px;}
+.wb-call-actions button[aria-pressed=true]{color:var(--call-green);}
+.meeting-info .recording-indicator,.recording-indicator svg{color:#ff9ca1;}
+.meeting-info .recording-indicator{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:32vw;}
+.call-controls .meeting-tools{position:static;transform:none;margin:auto;}
+.call-controls .exit-tool{margin-left:0;}
+@media(max-width:620px){.call-controls{flex-wrap:wrap;justify-content:center;gap:2px;min-height:50px;padding:3px;}
+.call-controls .meeting-tools{gap:0;margin:0;}.call-tool{min-width:36px;padding:2px 4px;font-size:10px;}}
+
+body:has(.call-overlay) .quick-actions{z-index:1600;}

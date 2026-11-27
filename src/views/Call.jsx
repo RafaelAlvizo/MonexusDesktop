@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Mic, MicOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, Volume2, X, ImagePlus, Blend, Ban, Check as Tick, ChevronUp } from 'lucide-react';
+import { CircleDot, Presentation, Mic, MicOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, Volume2, X, ImagePlus, Blend, Ban, Check as Tick, ChevronUp } from 'lucide-react';
 import { Avatar, Btn, ErrorText, Check, Label, Modal, WindowPin, useJob } from '../ui.jsx';
 import { voiceRoom } from '../voice.mjs';
 import { callVideo } from '../callVideo.mjs';
+import { CanvasEditor } from './Canvas.jsx';
+import PresentWhiteboard from './PresentWhiteboard.jsx';
+import { prepareAudioRecording } from '../callRecording.mjs';
 import { prepareBackground, processCamera } from '../cameraEffects.mjs';
 import '../call.css';
 import { meetingSoundEnabled, setMeetingSound } from '../meetingAudio.mjs';
@@ -103,7 +106,7 @@ function cameraPreferences(uid) {
     return { mirror: saved.mirror === true, image, mode: saved.mode === 'blur' || (image && saved.mode === 'image') ? saved.mode : 'none' };
   } catch { return { mirror:false, mode:'none', image:'' }; }
 }
-export default function Call({ api, me, members, m, entry, exit, now, onAttendance }) {
+export default function Call({ api, me, members, m, entry, exit: closeRoom, now, onAttendance }) {
   const [rows, setRows] = useState([]),
     [remote, setRemote] = useState({}),
     [states, setStates] = useState({}),
@@ -158,11 +161,70 @@ export default function Call({ api, me, members, m, entry, exit, now, onAttendan
     command = (action, data = {}) =>
       api.command('meeting.' + action, { id: m.id, session, ...data });
   const self = rows.find((x) => x.uid === me.id && x.session === session);
+  const recorder = useRef(null);
   const leaving = useRef(false);
+  const [recording, setRecording] = useState(false);
+  const [boardPicker, chooseBoard] = useState(false);
+  const [stage, setStage] = useState('board');
+  const latestTracks = useRef([]);
+  latestTracks.current = [voice.current, ...Object.values(remote)].flatMap(stream => stream?.getAudioTracks() || []);
+  useEffect(() => { recorder.current?.sync(latestTracks.current); });
+
+  async function stopRecording(announce = true) {
+    const current = recorder.current;
+    if (!current) return;
+    try {
+      await current.stop();
+    } finally {
+      if (recorder.current === current) {
+        recorder.current = null;
+        setRecording(false);
+        if (announce) await command('recording', { active: false });
+      }
+    }
+  }
+
+  async function toggleRecording() {
+    if (recorder.current) return stopRecording();
+    let local;
+    try {
+      local = await prepareAudioRecording(m.title, error => {
+        fail(error.message);
+        stopRecording().catch(err => fail(err.message));
+      });
+      if (!alive.current || leaving.current) {
+        await local.stop();
+        return;
+      }
+      await command('recording', { active: true });
+      if (!alive.current || leaving.current) {
+        await local.stop();
+        await command('recording', { active: false }).catch(() => {});
+        return;
+      }
+      recorder.current = local;
+      local.sync(latestTracks.current);
+      local.start();
+      setRecording(true);
+    } catch (error) {
+      if (local) {
+        await local.stop().catch(() => {});
+        recorder.current = null;
+        await command('recording', { active: false }).catch(() => {});
+      }
+      if (error.name !== 'AbortError') throw error;
+    }
+  }
+  useEffect(() => () => { recorder.current?.stop().catch(() => {}); }, []);
+  async function exit(message) {
+    try { await stopRecording(false); }
+    catch (error) { message = error.message; }
+    closeRoom(message);
+  }
   async function leave() {
     if (leaving.current) return;
     leaving.current = true;
-    try { await command('leave'); exit(); }
+    try { await stopRecording(false); await command('leave'); await exit(); }
     catch (e) { leaving.current = false; throw e; }
   }
   useEffect(() => {
@@ -219,6 +281,10 @@ export default function Call({ api, me, members, m, entry, exit, now, onAttendan
   const sourceFor = x => x.uid === me.id ? visual.source : x.sharing ? 'screen' : x.camera ? 'camera' : '';
   const shares = active.filter(x => sourceFor(x) === 'screen');
   const presenter = shares.find(x => x.uid === selectedShare) || shares[0];
+  const sharedBoard=active.some(x=>x.uid===m.whiteboard?.by && x.session===m.whiteboard?.session) ? m.whiteboard : null;
+  const boardOnStage=sharedBoard && (!presenter || stage==='board');
+  useEffect(()=>{if(m.whiteboard)setStage('board');},[m.whiteboard?.id,m.whiteboard?.session]);
+  const recordingNames=active.filter(x=>x.recording).map(x=>peerName(x.uid));
   function pulse() {
     const next = () => alive.current && !leaving.current ? command('pulse', { ...facts.current }) : undefined;
     pulses.current = pulses.current.catch(() => {}).then(next);
@@ -354,7 +420,7 @@ export default function Call({ api, me, members, m, entry, exit, now, onAttendan
   async function finish() {
     if (confirmClose === 'leave') return leave();
     leaving.current = true;
-    try { await command('end'); exit(); }
+    try { await stopRecording(false); await command('end'); await exit(); }
     catch (e) { leaving.current = false; throw e; }
   }
   useEffect(() => {
@@ -387,7 +453,7 @@ export default function Call({ api, me, members, m, entry, exit, now, onAttendan
     >
       <header className="call-header">
         <div className="meeting-identity"><span className="meeting-mark" aria-hidden="true">M</span><h2>{m.title}</h2></div>
-        <div className="meeting-info"><span aria-label={active.length + ' in call'}><Users size={15}/>{active.length}</span><WindowPin /></div>
+        <div className="meeting-info">{recordingNames.length>0 && <span className="recording-indicator" role="status" title={recordingNames.join(', ')}>Recording · {recordingNames.join(', ')}</span>}<span aria-label={active.length + ' in call'}><Users size={15}/>{active.length}</span><WindowPin /></div>
       </header>
       <main className={'call-main' + (settings ? ' with-settings' : '')}>
         {settings && admitted && <section className="call-settings" aria-label="Call settings" ref={panel} tabIndex={-1}
@@ -458,7 +524,7 @@ export default function Call({ api, me, members, m, entry, exit, now, onAttendan
           <ErrorText error={error || job.error} />
           </div>
         </section>}
-        <div className={"meeting-stage" + (presenter ? " presenting" : "")}>
+        <div className={"meeting-stage" + (presenter || sharedBoard ? " presenting" : "")}>
         {!admitted ? (
           <div className="lobby">
             <Users size={40} />
@@ -471,7 +537,7 @@ export default function Call({ api, me, members, m, entry, exit, now, onAttendan
               '--people': active.length || 1,
               '--cols': active.length > 4 ? 3 : 2, '--rows': Math.ceil(active.length / (active.length > 4 ? 3 : 2)),
               '--narrow-rows': Math.ceil(active.length / 2),
-            }} data-count={active.length} data-sharing={!!presenter || undefined}>
+            }} data-count={active.length} data-sharing={!!(presenter || sharedBoard) || undefined}>
               {active.map((x) => (
                 <Participant key={x.session} person={members.find(p => p.id === x.uid)}
                   name={peerName(x.uid)} self={x.uid === me.id} mirror={appearance.mirror} context={context}
@@ -481,7 +547,12 @@ export default function Call({ api, me, members, m, entry, exit, now, onAttendan
                   muted={x.uid === me.id ? !mic : x.muted} state={states[x.uid]} />
               ))}
             </div>
-            {presenter && <section className="shared-content" aria-label="Shared screen">
+            {sharedBoard && <div className="wb-call-actions">
+              {presenter && <><button aria-pressed={!!boardOnStage} onClick={()=>setStage('board')}>Whiteboard</button><button aria-pressed={!boardOnStage} onClick={()=>setStage('screen')}>Shared screen</button></>}
+              {(host || sharedBoard.by===me.id) && <button onClick={()=>job.run(()=>command('whiteboard',{canvas:''}))}>Stop whiteboard sharing</button>}
+            </div>}
+            {boardOnStage && <CanvasEditor key={sharedBoard.id} {...{api,me,members,session}} id={sharedBoard.id} room={m.id}/>}
+            {presenter && !boardOnStage && <section className="shared-content" aria-label="Shared screen">
               <div className="share-sources">
                 {shares.length === 1 ? <span><MonitorUp size={14}/>{presenter.uid === me.id ? 'Your screen' : peerName(presenter.uid) + '’s screen'}</span> :
                   shares.map(x => <button key={x.session} aria-pressed={presenter.uid === x.uid} onClick={() => selectShare(x.uid)}>
@@ -549,12 +620,16 @@ export default function Call({ api, me, members, m, entry, exit, now, onAttendan
           <div className="meeting-tools">
             <Tool icon={MonitorUp} label={visual.source === 'screen' ? 'Stop sharing' : 'Share screen'} tone="share-tool" aria-pressed={visual.source === 'screen'}
               disabled={!ready || job.busy} onClick={() => job.run(() => video.current.share())}>{visual.source === 'screen' ? 'Stop share' : 'Share'}</Tool>
+            <Tool icon={Presentation} label="Share a whiteboard" disabled={!ready || job.busy} onClick={()=>chooseBoard(true)}>Whiteboard</Tool>
+            <Tool icon={CircleDot} tone={recording?'recording-indicator':''} label={recording?'Stop audio recording':'Record meeting audio'} aria-pressed={recording}
+              disabled={!ready || job.busy} onClick={()=>job.run(toggleRecording)}>{recording?'Stop recording':'Record'}</Tool>
             <Tool icon={Settings2} label="Call settings" aria-expanded={!!settings} onClick={e => settings ? closeSettings() : openSettings(e)}>Settings</Tool>
           </div>
         </>}
         <Tool icon={PhoneOff} tone="exit-tool" label={host ? 'End for everyone' : 'Leave meeting'} disabled={job.busy}
           onClick={() => setConfirmClose(host ? 'end' : 'leave')}>{host ? 'End' : 'Leave'}</Tool>
       </footer>
+      {boardPicker && <PresentWhiteboard {...{api,me,command}} close={()=>chooseBoard(false)}/>}
       {confirmClose && <Modal title={confirmClose === 'end' ? 'End meeting for everyone?' : 'Leave this meeting?'}
         onClose={() => !job.busy && setConfirmClose('')}>
         <div className="form-body"><p>{confirmClose === 'end' ? 'The meeting will end for every participant and this window will close.' : 'Your camera, microphone and screen sharing will stop, and this window will close.'}</p><ErrorText error={job.error}/></div>

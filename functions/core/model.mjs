@@ -173,6 +173,7 @@ export function boardTemplate(
       ['backlog', 'Backlog', 'slate'],
       ['todo', 'To do', 'gold'],
       ['doing', 'Doing', 'blue'],
+      ['pause', 'Pause', 'slate'],
       ['review', 'Review', 'violet'],
       ['testing', 'Testing', 'orange'],
       ['done', 'Done', 'green'],
@@ -236,15 +237,15 @@ export function cleanConfig(input, previous) {
   check(
     Array.isArray(input.columns) &&
       input.columns.length >= 1 &&
-      input.columns.length <= 32 &&
+      input.columns.filter(c => c.id !== 'pause').length <= 32 &&
       unique(input.columns, 'id'),
-    'A board needs 1–32 uniquely identified columns.',
+    'Keep up to 32 configured columns plus Pause, each with its own ID.',
   );
   check(
-    input.columns.some((c) => c.id !== 'backlog'),
+    input.columns.some((c) => c.id !== 'backlog' && c.id !== 'pause'),
     'Keep at least one public board stage.',
   );
-  cfg.columns = input.columns.map((c) => {
+  cfg.columns = withPause(input.columns).map((c) => {
     id(c.id);
     check(colors.includes(c.color), 'Invalid column color.');
     return {
@@ -317,7 +318,7 @@ export function cleanConfig(input, previous) {
     check(
       cfg.timing.start !== cfg.timing.finish &&
         [cfg.timing.start, cfg.timing.finish].every((key) =>
-          cfg.columns.some((c) => c.id === key),
+          key !== 'pause' && cfg.columns.some((c) => c.id === key),
         ),
       'Choose two different existing columns for automatic timing.',
     );
@@ -546,4 +547,29 @@ export function mayContribute(policy, key, user) {
   if (!acl && key === 'vault') return user.role === 'owner';
   if (!acl) return isAdmin(user) || ['notes', 'whiteboard'].includes(key);
   return user.role === 'owner' || aclAllows(acl, user);
+}
+
+export function withPause(columns) {
+  if (columns.some(c => c.id === 'pause')) return columns;
+  const doing = columns.findIndex(c => c.id === 'doing');
+  const index = doing < 0 ? columns.length : doing + 1;
+  return [...columns.slice(0, index), { id: 'pause', name: 'Pause', color: 'slate' }, ...columns.slice(index)];
+}
+
+export function updateTicketTimer(board, old, column, now) {
+  const {start, finish, since = board.createdAt} = board.timing;
+  const timer = old?.timer?.epoch === since ? { ...old.timer } :
+    { epoch: since, elapsed: 0, running: old?.column === start && old.updatedAt <= since ? since : null };
+  if (column === 'pause' || column === finish) {
+    if (timer.running != null) {
+      timer.elapsed += Math.max(0, now - timer.running);
+      timer.running = null;
+      timer.paused = column === 'pause';
+    }
+    if (column === finish) timer.paused = false;
+  } else if (timer.running == null && (column === start || timer.paused)) {
+    timer.running = now;
+    timer.paused = false;
+  }
+  return timer;
 }

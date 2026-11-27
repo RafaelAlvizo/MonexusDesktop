@@ -196,7 +196,7 @@ export default function BoardConfig({ api, board, me, members, onClose, onSaved,
                   <p>
                     Real hours record elapsed time from the start column to the
                     finish column, including time in between. Reopened cycles
-                    add to the total.
+                    add to the total. Moving a running ticket to Pause stops the clock until work resumes.
                   </p>
                   <div className="form-grid">
                     {[
@@ -212,7 +212,7 @@ export default function BoardConfig({ api, board, me, members, onClose, onSaved,
                             })
                           }
                         >
-                          {cfg.columns.map((c) => (
+                          {cfg.columns.filter(c => c.id !== 'pause').map((c) => (
                             <option key={c.id} value={c.id}>
                               {c.name}
                             </option>
@@ -342,7 +342,7 @@ export default function BoardConfig({ api, board, me, members, onClose, onSaved,
                 <IconButton
                   icon={X}
                   label="Remove column"
-                  disabled={cfg.columns.length === 1 || board?.counts[c.id] > 0}
+                  disabled={c.id === 'pause' || cfg.columns.length === 1 || board?.counts[c.id] > 0}
                   onClick={() =>
                     patch({ columns: cfg.columns.filter((x) => x.id !== c.id) })
                   }

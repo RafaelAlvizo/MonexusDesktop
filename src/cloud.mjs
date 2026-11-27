@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { defaultPrefs } from '../functions/core/model.mjs';
+import { defaultPrefs, withPause } from '../functions/core/model.mjs';
 import {
   getAuth,
   createUserWithEmailAndPassword,
@@ -221,7 +221,7 @@ async function getWorkspace(user) {
             q,
             (s) => {
               boardsReady = true;
-              boards = s.docs.map((d) => d.data());
+              boards = s.docs.map(d => { const board = d.data(); return { ...board, columns: withPause(board.columns) }; });
               notify();
             },
             fail,

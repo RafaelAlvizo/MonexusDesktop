@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  Layers3,
+  Layers3, Presentation,
   PanelsTopLeft,
   MessagesSquare,
   Inbox,
@@ -51,6 +51,7 @@ const Admin = lazy(() => import('./views/Admin.jsx')),
   FigmaResource = lazy(() => import('./views/Figma.jsx')),
   Meetings = lazy(() => import('./views/Meetings.jsx')),
   Eod = lazy(() => import('./views/Eod.jsx')),
+  Canvas = lazy(() => import('./views/Canvas.jsx')),
   Notes = lazy(() => import('./views/Notes.jsx')),
   Resources = lazy(() => import('./views/Resources.jsx')),
   Preferences = lazy(() => import('./views/Preferences.jsx')),
@@ -68,6 +69,7 @@ const nav = [
   ['vault', 'Sensitive data', KeyRound],
   ['links', 'Apps & links', Link2],
   ['figma', 'Figma', FigmaIcon],
+  ['canvas', 'Whiteboards', Presentation],
   ['eod', 'EOD', CalendarCheck],
 ];
 const windowViews = new Set(['notes', 'meetings', 'docs', 'drive', 'vault', 'channels']);
@@ -617,6 +619,8 @@ function App() {
             <InboxPage {...shared} open={openNotice} />
           ) : view === 'figma' ? (
             <FigmaResource {...shared} />
+          ) : view === 'canvas' ? (
+            <Canvas {...shared} />
           ) : view === 'notes' ? (
             <Notes {...shared} initialNote={detached && windowParams.get('note')}
               initialScope={detached && windowParams.get('scope')} popOut={detached ? null : popOut} />

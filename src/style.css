@@ -1836,3 +1836,9 @@ button.roster-row:hover { background: var(--lane); }
 .meeting-invite small {font-size:13px;font-weight:600;color:var(--accent);}
 .meeting-invite h3 {font-size:21px;line-height:1.25;margin:6px 0 4px;overflow-wrap:anywhere;}
 .meeting-invite p {margin:0 0 16px;color:var(--muted);}
+
+.sidebar .nav-item{font-size:14px;min-height:37px;}
+.sidebar .nav-item.sub,.sidebar .conversation-row .nav-item{font-size:13px;min-height:32px;}
+.sidebar .nav-label,.sidebar .conversation-list h4{font-size:11px;}
+.sidebar .nav-item>svg:first-child,.sidebar .nav-label button svg{width:18px;height:18px;}
+.sidebar .conversation-list .avatar.small{width:24px;height:24px;}
