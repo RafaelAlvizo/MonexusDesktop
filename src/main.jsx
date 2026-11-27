@@ -176,7 +176,8 @@ function App() {
     [rail, setRail] = useState(false),
     [jump, setJump] = useState(null),
     [newBoard, newBoardSet] = useState(0),
-    [channelId, setChannelId] = useState('');
+    [channelId, setChannelId] = useState(''),
+    [inboxMessage, setInboxMessage] = useState(null);
   const presence = useRef('Online'),
     settings = useRef(prefs);
   settings.current = prefs;
@@ -368,6 +369,7 @@ function App() {
   );
   const go = (v) => {
       setView(v);
+      setInboxMessage(null);
       if (api && !detached) localStorage.setItem('monexus.resource.' + api.uid, v);
       if(v==='eod')setEodDate({day:''});
       setRail(false);
@@ -386,6 +388,7 @@ function App() {
     } else if (n.channel) {
       setChannelId(n.channel);
       go('channels');
+      setInboxMessage(n.message ? { channel: n.channel, id: n.message } : null);
     }
   };
   const title =
@@ -658,6 +661,7 @@ function App() {
             showing={view === 'channels'}
             meeting={(ch, mode) => requestMeeting({ ch, mode })}
             selected={channelId}
+            inboxMessage={inboxMessage}
             initialPeer={detached ? windowParams.get('peer') : ''}
             popOut={detached ? null : popOut}
             onSelect={(id) => {

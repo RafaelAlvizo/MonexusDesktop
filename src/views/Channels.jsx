@@ -36,6 +36,7 @@ import {
   channelActions,
   channelAllows,
   isAdmin,
+  presenceLabel,
   newId,
 } from '../../functions/core/model.mjs';
 import {
@@ -208,8 +209,8 @@ function PersonIcon({ person, state = 'Offline' }) {
         className="presence-icon"
         data-state={state}
         role="img"
-        aria-label={state}
-        title={state}
+        aria-label={presenceLabel(state)}
+        title={presenceLabel(state)}
       >
         {Icon && <Icon size={9} strokeWidth={3} />}
       </span>
@@ -252,6 +253,7 @@ function Feed({
   onProfile,
   popOut,
   initialDraft = '',
+  inboxMessage,
   consumeDraft,
 }) {
   const [recent, setRecent] = useState(
@@ -275,10 +277,16 @@ function Feed({
     [deleting, confirmDelete] = useState(null),
     [media, showMedia] = useState(''),
     [pinned, onlyPins] = useState(false),
+    [historyState, setHistoryState] = useState('loading'),
+    [historyAttempt, retryHistory] = useState(0),
+    [liveHistory, setLiveHistory] = useState(false),
+    [openedPost, setOpenedPost] = useState(null),
     [progress, setProgress] = useState(0),
     job = useJob();
   const stream = useRef(null),
     follow = useRef(true),
+    openedElement = useRef(null),
+    scrolledTo = useRef(null),
     composer = useRef(null);
   useEffect(() => {
     composer.current?.focus();
@@ -385,10 +393,13 @@ function Feed({
   }, [latest]);
   const [pinLimit, setPinLimit] = useState(50);
   useEffect(() => {
+    setHistoryState('loading');
     setRecent(pinned ? [] : recentMessages(api).get(ch.id) || []);
     return api.watchMessages(
       ch.id,
-      (rows) => {
+      (rows, live) => {
+        setHistoryState('ready');
+        setLiveHistory(live);
         if (!pinned) {
           const cache = recentMessages(api);
           cache.delete(ch.id);
@@ -401,11 +412,14 @@ function Feed({
         recentMessages(api).delete(ch.id);
         setRecent([]);
         setOlder([]);
-        tell(e);
+        setOpenedPost(null);
+        setLiveHistory(false);
+        prefetched.current = false;
+        setHistoryState(e?.message || 'Could not load messages.');
       },
       { pinned, limit: pinLimit },
     );
-  }, [api, ch.id, pinned, pinLimit]);
+  }, [api, ch.id, pinned, pinLimit, historyAttempt]);
   const prefetched = useRef(false);
   useEffect(() => {
     if (pinned || prefetched.current || recent.length < 50) return;
@@ -427,7 +441,7 @@ function Feed({
   }, [ch.id, pinned, recent[0]?.id]);
   const olderIds = older.map((m) => m.id).join(',');
   useEffect(() => {
-    if (!olderIds) return;
+    if (!olderIds || !liveHistory) return;
     const offs = olderIds.split(',').map((id) =>
       api.watchMessage(
         ch.id,
@@ -446,13 +460,29 @@ function Feed({
       ),
     );
     return () => offs.forEach((off) => off());
-  }, [api, ch.id, olderIds]);
+  }, [api, ch.id, olderIds, liveHistory]);
+  const inboxPost = !pinned && historyState === 'ready' && openedPost && openedPost.id === inboxMessage?.id ? [openedPost] : [];
   const all = [
       ...new Map(
-        [...(pinned ? [] : older), ...recent].map((m) => [m.id, m]),
+        [...inboxPost, ...(pinned ? [] : older), ...recent].map((m) => [m.id, m]),
       ).values(),
     ].sort((a, b) => a.at - b.at),
     can = (k) => channelAllows(ch, me, k);
+  const hasTarget = [...older, ...recent].some(post => post.id === inboxMessage?.id);
+  useEffect(() => {
+    if (!inboxMessage || pinned || hasTarget || historyState !== 'ready') return;
+    let active = true;
+    api.command('channel.message', { channel: ch.id, id: inboxMessage.id })
+      .then(post => { if (active) setOpenedPost(post); })
+      .catch(error => { if (active) { setOpenedPost(null); tell(error); } });
+    return () => { active = false; };
+  }, [api, ch.id, inboxMessage, pinned, hasTarget, historyState]);
+  useEffect(() => {
+    if (inboxMessage && scrolledTo.current !== inboxMessage && openedElement.current && historyState === 'ready') {
+      openedElement.current.scrollIntoView({ block: 'center' });
+      scrolledTo.current = inboxMessage;
+    }
+  }, [inboxMessage, historyState, openedPost, hasTarget]);
   const command = (op, p) =>
     job.run(() => api.command('channel.' + op, { channel: ch.id, ...p }));
   const post = () =>
@@ -545,7 +575,7 @@ function Feed({
         <Btn
           onClick={() =>
             job.run(async () => {
-              const first = all[0],
+              const first = older[0] || recent[0],
                 p = await api.command('channel.older', {
                   channel: ch.id,
                   id: first.id,
@@ -587,8 +617,9 @@ function Feed({
                   </div>
                 )}
                 <article
+                  ref={inboxMessage?.id === m.id ? openedElement : null}
                   className={
-                    'post chat-message ' + (m.by === me?.id ? 'own' : '')
+                    'post chat-message ' + (m.by === me?.id ? 'own ' : '') + (inboxMessage?.id === m.id ? 'inbox-message' : '')
                   }
                   key={m.id}
                 >
@@ -750,7 +781,9 @@ function Feed({
             );
           })}
         {!all.some((m) => !pinned || m.pinned) && (
-          <Empty>{pinned ? 'No pinned posts.' : 'No messages yet.'}</Empty>
+          historyState === 'ready' ? <Empty>{pinned ? 'No pinned posts.' : 'No messages yet.'}</Empty>
+          : historyState === 'loading' ? <Empty>Loading messages…</Empty>
+          : <div role="alert"><ErrorText error={historyState} /><Btn onClick={() => retryHistory(n => n + 1)}>Retry messages</Btn></div>
         )}
       </div>
       {can('post') && (
@@ -1003,6 +1036,7 @@ export default function Channels({
   me,
   members,
   selected,
+  inboxMessage,
   showing,
   onSelect,
   onProfile,
@@ -1312,6 +1346,7 @@ export default function Channels({
             {ch ? (
               <Feed
                 key={ch.id}
+                inboxMessage={inboxMessage?.channel === ch.id ? inboxMessage : null}
                 {...{ api, ch, me, members, tell, presence, meeting, onProfile, popOut }}
                 initialDraft={drafts.current[peerId] || ''}
                 consumeDraft={() => delete drafts.current[peerId]}

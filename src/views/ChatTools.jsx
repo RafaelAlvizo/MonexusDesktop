@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { presenceLabel } from '../../functions/core/model.mjs';
 import { Avatar, Btn, ErrorText, Label, Modal, useJob } from '../ui.jsx';
 export function PollForm({ submit, close }) {
   const [question, ask] = useState(''),
@@ -99,7 +100,7 @@ export function Roster({ members, presence, close, onProfile }) {
             rows.length > 0 && (
               <section key={state}>
                 <h3>
-                  {state} · {rows.length}
+                  {presenceLabel(state)} · {rows.length}
                 </h3>
                 {rows.map((m) => (
                   <button className="roster-row" key={m.id} onClick={() => onProfile(m)}>

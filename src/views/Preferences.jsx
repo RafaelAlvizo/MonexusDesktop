@@ -11,6 +11,7 @@ import {
   eventNames,
   methods,
   presenceStates,
+  onlineMode,
   isAdmin,
 } from '../../functions/core/model.mjs';
 export function Matrix({ value, onChange, inherit = false }) {
@@ -77,7 +78,7 @@ export default function Preferences({
   const [section, choose] = useState('Profile'),
     [p, set] = useState({
       ...prefs,
-      presence: prefs.presence === 'Idle' ? 'Online' : prefs.presence,
+      presence: onlineMode(prefs.presence),
     }),
     [photo, setPhoto] = useState(me?.photo || ''),
     [name, setName] = useState(me?.name || ''),
@@ -250,7 +251,7 @@ export default function Preferences({
             )}
           </div>
           <p className="muted">
-            Offline and Do Not Disturb pause banners and sounds. Choose
+            Do Not Disturb pauses banners and sounds while you’re online. Choose
             “Workspace default” below to use your team’s notification settings.
           </p>
           <details className="advanced-settings">

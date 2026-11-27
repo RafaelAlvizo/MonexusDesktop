@@ -1379,6 +1379,7 @@ details > .form-grid {
 .feed > .btn { align-self:center; }
 .chat-page .feed-posts { flex:1; min-height:0; max-height:none; overflow:auto; padding:16px clamp(12px,3vw,44px); }
 .chat-message { border:0; padding:8px 0; }
+.chat-message.inbox-message { box-shadow: inset 3px 0 var(--accent); padding-inline-start: 10px; }
 .chat-message > p:not(:empty) { display:table; padding:9px 13px; background:var(--lane); border-radius:2px 12px 12px 12px; line-height:1.5; max-width:90%; }
 .chat-message.own > p:not(:empty) { background:var(--tint); }
 .chat-message .post-actions { opacity:.6; }

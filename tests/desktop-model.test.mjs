@@ -5,9 +5,41 @@ import { boundsOf, resizeFromCorner } from '../src/whiteboardGeometry.mjs';
 import { callVideo } from '../src/callVideo.mjs';
 import {
   boardTemplate, withPause, updateTicketTimer,
-  channelAllows,
+  aggregatePresence, channelAllows, onlineMode, presenceStates,
   figmaEmbed,cleanAcl,mayContribute,
 } from '../functions/core/model.mjs';
+import { subscribeWithFallback } from '../src/realtime.mjs';
+
+test('a running session is online even with an old Offline preference; disconnected leases expire', () => {
+  const now = 800000;
+  assert.deepEqual(presenceStates, ['Online', 'Do Not Disturb']);
+  assert.equal(onlineMode('Offline'), 'Online');
+  assert.equal(aggregatePresence({ desktop: { state: 'Offline' } }), 'Online');
+  const meeting = { 'meeting-http-device': { state: 'Online', at: now } };
+  assert.equal(aggregatePresence(meeting, true, now), 'In a meeting');
+  assert.equal(aggregatePresence(meeting, true, now + 150000), 'Offline');
+  assert.equal(aggregatePresence({ ...meeting, desktop: { state: 'Do Not Disturb' } }, true, now + 150000), 'Do Not Disturb');
+});
+
+test('a delayed history request cannot replace a newer live message or update a closed channel', async () => {
+  let connection, snapshot, resolveRead, started;
+  const reading = new Promise(resolve => { started = resolve; });
+  const values = [];
+  const stop = subscribeWithFallback({
+    watchConnection: cb => { connection = cb; return () => {}; },
+    watchRows: cb => { snapshot = cb; return () => {}; },
+    read: () => new Promise(resolve => { resolveRead = resolve; started(); }),
+    update: rows => values.push(rows), fail: assert.fail,
+  });
+  await reading;
+  connection(true);
+  snapshot(['new']);
+  resolveRead(['old']);
+  await Promise.resolve();
+  stop();
+  snapshot(['late']);
+  assert.deepEqual(values, [['new']]);
+});
 
 test('whiteboard resizing anchors the opposite corner and supports legacy shapes and strokes', () => {
   const oldDiamond = { kind: 'diamond', x: 100, y: 50 };

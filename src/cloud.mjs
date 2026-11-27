@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app';
-import { defaultPrefs, withPause } from '../functions/core/model.mjs';
+import { subscribeWithFallback } from './realtime.mjs';
+import { aggregatePresence, defaultPrefs, onlineMode, presenceExpiresAt, withPause } from '../functions/core/model.mjs';
 import {
   getAuth,
   createUserWithEmailAndPassword,
@@ -96,7 +97,7 @@ async function getWorkspace(user) {
       await c.httpsCallable(
         calls,
         action.startsWith('vault.') ? 'vault' : 'workspace',
-        { timeout: 300000 },
+        { timeout: action === 'channel.history' || action.startsWith('presence.') ? 15000 : 300000 },
       )({ action, p })
     ).data;
   const endpoint = local
@@ -170,7 +171,7 @@ async function getWorkspace(user) {
     },
     watchSettings(update, fail) {
       return f.onSnapshot(f.doc(db, 'members', uid, 'private', 'settings'),
-        snap => update({ ...defaultPrefs, ...snap.data() }), fail);
+        snap => update({ ...defaultPrefs, ...snap.data(), presence: onlineMode(snap.data()?.presence) }), fail);
     },
     mcpUrl: endpoint + 'assistantMcp',
     async logout() {
@@ -410,17 +411,29 @@ async function getWorkspace(user) {
               r.limitToLast(limit),
             )
           : r.query(base, r.orderByChild('at'), r.limitToLast(50));
-      return r.onValue(
-        q,
-        (snap) => {
-          const arr = [];
-          snap.forEach((x) => {
-            arr.push(x.val());
-          });
-          cb(arr.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id)));
+      return subscribeWithFallback({
+        watchConnection: notify => r.onValue(r.ref(rt, '.info/connected'), snap => notify(snap.val() === true)),
+        watchRows: (notify, reject) => r.onValue(q, snap => {
+          const rows = [];
+          snap.forEach(child => { rows.push({ ...child.val(), id: child.key }); });
+          notify(rows);
+        }, reject),
+        read: async () => {
+          if (!pinned) return command('channel.history', { channel: key });
+          const rows = [];
+          let before;
+          while (rows.length < limit) {
+            const count = Math.min(100, limit - rows.length);
+            const page = await command('channel.history', { channel: key, pinned: true, limit: count, before });
+            rows.push(...page);
+            if (page.length < count) break;
+            before = page[0].id;
+          }
+          return rows;
         },
+        update: (rows, live) => cb(rows.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id)), live),
         fail,
-      );
+      });
     },
     watchMessage(channel, key, cb, fail) {
       return r.onValue(
@@ -462,24 +475,29 @@ async function getWorkspace(user) {
       };
     },
     watchPresence(cb, fail) {
-      return r.onValue(
-        r.ref(rt, 'presence'),
-        (snap) => {
-          const map = {};
-          snap.forEach((m) => {
-            const v = Object.values(m.val()).map((s) =>
-              s.state === 'Idle' ? 'Online' : s.state,
-            );
-            const attending = Object.entries(m.val()).some(([key, value]) =>
-              key.startsWith('meeting-') && value.state !== 'Offline');
-            map[m.key] = attending ? 'In a meeting' :
-              ['Do Not Disturb', 'Online', 'Idle'].find((k) => v.includes(k)) ||
-              'Offline';
-          });
-          cb(map);
-        },
-        fail,
-      );
+      let sessions = {}, expiry;
+      const render = () => {
+        clearTimeout(expiry);
+        const now = Date.now(), map = {};
+        let next = Infinity;
+        for (const [member, devices] of Object.entries(sessions)) {
+          map[member] = aggregatePresence(devices, true, now);
+          for (const [key, device] of Object.entries(devices)) {
+            const expires = presenceExpiresAt(key, device);
+            if (expires > now) next = Math.min(next, expires);
+          }
+        }
+        cb(map);
+        if (Number.isFinite(next)) expiry = setTimeout(render, next - now + 1);
+      };
+      const stop = subscribeWithFallback({
+        watchConnection: notify => r.onValue(r.ref(rt, '.info/connected'), snap => notify(snap.val() === true)),
+        watchRows: (notify, reject) => r.onValue(r.ref(rt, 'presence'), snap => notify(snap.val() || {}), reject),
+        read: () => command('presence.list'), interval: 15000,
+        update: data => { sessions = data; render(); },
+        fail: error => { sessions = {}; render(); fail(error); },
+      });
+      return () => { stop(); clearTimeout(expiry); };
     },
     watchAlerts(cb, fail) {
       const after = Date.now(),
@@ -516,27 +534,40 @@ async function getWorkspace(user) {
       };
     },
     presence(mode, onState, onError, inMeeting = false) {
-      const session = r.ref(rt, 'presence/' + uid + '/' + (inMeeting ? 'meeting-' : '') + crypto.randomUUID()),
+      const id = crypto.randomUUID(), state = onlineMode(mode);
+      const session = r.ref(rt, 'presence/' + uid + '/' + (inMeeting ? 'meeting-' : '') + id),
         disc = r.onDisconnect(session);
-      let connected = false,
-        closed = false,
-        state = mode === 'Idle' ? 'Online' : mode;
-      const publish = (next) => {
-        state = next;
-        onState(next);
-        if (connected && !closed)
-          r.set(session, { state: next, at: r.serverTimestamp() }).catch(
-            onError,
-          );
+      const params = { id, state, meeting: inMeeting };
+      let closed = false, connected = false, sequence = 0, timer, pulse, leased = false;
+      const releaseLease = async () => {
+        if (pulse) await pulse.catch(() => {});
+        if (leased) { leased = false; await command('presence.end', params); }
+      };
+      const heartbeat = async () => {
+        if (closed || connected || pulse) return;
+        leased = true;
+        pulse = command('presence.pulse', params);
+        try { await pulse; } catch (error) { if (!closed) onError(error); }
+        finally {
+          pulse = null;
+          if (!closed && !connected) timer = setTimeout(heartbeat, 35000);
+        }
       };
       const off = r.onValue(r.ref(rt, '.info/connected'), async (snap) => {
+        const attempt = ++sequence;
         connected = false;
+        clearTimeout(timer);
+        timer = setTimeout(heartbeat, 2000);
         if (!snap.val()) return;
         try {
           await disc.remove();
-          if (closed) return;
+          if (closed || attempt !== sequence) return;
+          await r.set(session, { state, at: r.serverTimestamp() });
+          if (closed) { await r.remove(session); return; }
+          if (attempt !== sequence) return;
           connected = true;
-          publish(state);
+          clearTimeout(timer);
+          await releaseLease();
         } catch (e) {
           if (!closed) onError(e);
         }
@@ -545,11 +576,9 @@ async function getWorkspace(user) {
       const release = async () => {
         if (closed) return;
         closed = true;
+        clearTimeout(timer);
         off();
-        if (connected) {
-          await r.remove(session);
-          await disc.cancel();
-        }
+        await Promise.all([releaseLease(), connected ? r.remove(session).then(() => disc.cancel()) : Promise.resolve()]);
       };
       releasePresence = release;
       return () => {

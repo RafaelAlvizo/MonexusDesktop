@@ -490,13 +490,17 @@ export const defaultPrefs = {
   color: '#2c6956',
   events: {},
 };
-export const presenceStates = ['Online', 'Offline', 'Do Not Disturb'];
-export function aggregatePresence(sessions = {}) {
-  const values = Object.values(sessions || {}).map((s) => s.state);
-  return (
-    ['Do Not Disturb', 'Online', 'Idle'].find((s) => values.includes(s)) ||
-    'Offline'
-  );
+export const presenceStates = ['Online', 'Do Not Disturb'];
+export const onlineMode = state => state === 'Do Not Disturb' ? state : 'Online';
+export const presenceLabel = state => ['Do Not Disturb', 'In a meeting'].includes(state) ? 'Online · ' + state : state;
+export function presenceExpiresAt(key, session) {
+  return /^(meeting-)?http-/.test(key) ? (Number(session?.at) || 0) + 150000 : Infinity;
+}
+export function aggregatePresence(sessions = {}, showMeeting = false, now = Date.now()) {
+  const current = Object.entries(sessions || {}).filter(([key, session]) => session && presenceExpiresAt(key, session) > now);
+  if (!current.length) return 'Offline';
+  if (showMeeting && current.some(([key]) => key.startsWith('meeting-'))) return 'In a meeting';
+  return current.some(([, session]) => session.state === 'Do Not Disturb') ? 'Do Not Disturb' : 'Online';
 }
 export const defaultDelivery = () =>
   Object.fromEntries(
