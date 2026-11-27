@@ -1,26 +1,28 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Mic, MicOff, MonitorUp, PhoneOff, Settings2, Users, Volume2 } from 'lucide-react';
-import { Avatar, Btn, ErrorText, Check, Label, useJob } from '../ui.jsx';
+import { Mic, MicOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, Volume2 } from 'lucide-react';
+import { Avatar, Btn, ErrorText, Check, Label, Modal, WindowPin, useJob } from '../ui.jsx';
 import { voiceRoom } from '../voice.mjs';
-import { desktop } from '../native.mjs';
+import { callVideo } from '../callVideo.mjs';
+import { desktop, nativeAction } from '../native.mjs';
 
 function Media({ stream, video = false, muted = false, volume = 1 }) {
   const ref = useRef(),
     [blocked, block] = useState(false);
+  const track = video ? stream?.getVideoTracks()[0] : stream?.getAudioTracks()[0];
   useEffect(() => { if (ref.current) ref.current.volume = volume; }, [volume]);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.srcObject = stream || null;
-    if (stream)
+    el.srcObject = track ? new MediaStream([track]) : null;
+    if (track)
       el.play()
         .then(() => block(false))
         .catch(() => block(true));
     return () => {
       el.srcObject = null;
     };
-  }, [stream]);
+  }, [track]);
   return (
     <>
       {video ? (
@@ -44,7 +46,7 @@ function Media({ stream, video = false, muted = false, volume = 1 }) {
     </>
   );
 }
-function Participant({ person, name, self, stream, muted, state, context, volume }) {
+function Participant({ person, name, self, stream, visual, source, muted, state, context, volume }) {
   const [speaking, setSpeaking] = useState(false);
   const track = stream?.getAudioTracks()[0];
   useEffect(() => {
@@ -66,8 +68,9 @@ function Participant({ person, name, self, stream, muted, state, context, volume
     return () => { clearInterval(timer); source.disconnect(); meter.disconnect(); };
   }, [track, muted, context]);
   const talking = speaking && !muted;
-  return <div className={'call-tile' + (talking ? ' speaking' : '')}>
-    <Avatar person={person} />
+  return <div className={'call-tile' + (talking ? ' speaking' : '')} data-source={source || 'off'}>
+    {visual && source ? <Media stream={visual} video muted /> : <Avatar person={person} />}
+    {source === 'screen' && <small className="tile-share"><MonitorUp size={14}/> Sharing screen</small>}
     <strong>{name}{self ? ' (you)' : ''}</strong>
     <small>{muted ? <MicOff size={14}/> : <Mic size={14}/>}
       {talking ? 'Speaking' : muted ? 'Muted' : self || state === 'connected' ? 'Listening' :
@@ -81,7 +84,9 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
     [remote, setRemote] = useState({}),
     [states, setStates] = useState({}),
     [mic, setMic] = useState(false),
-    [screen, setScreen] = useState(null),
+    [visual, setVisual] = useState({ stream: null, source: '' }),
+    [confirmClose, setConfirmClose] = useState(''),
+    [cameraId, setCameraId] = useState(''),
     [error, fail] = useState(''),
     [ready, setReady] = useState(false);
   const [settings, showSettings] = useState(false),
@@ -91,9 +96,10 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
     [context, setContext] = useState(null);
   const media = useRef(null),
     voice = useRef(null),
-    display = useRef(null),
+    video = useRef(null),
+    pulses = useRef(Promise.resolve()),
     alive = useRef(true),
-    facts = useRef({ muted: true, sharing: false }),
+    facts = useRef({ muted: true, sharing: false, camera: false }),
     job = useJob();
   const session = entry.session,
     command = (action, data = {}) =>
@@ -103,8 +109,8 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
   async function leave() {
     if (leaving.current) return;
     leaving.current = true;
-    try { await command('leave'); }
-    finally { exit(); }
+    try { await command('leave'); exit(); }
+    catch (e) { leaving.current = false; throw e; }
   }
   useEffect(() => {
     let live = true, release;
@@ -112,12 +118,17 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
     refresh();
     const timer = setInterval(refresh, 30 * 60 * 1000);
     const unload = () => { if (!leaving.current) release?.(); };
-    const close = e => { if (e.data?.kind === 'close_call') leave().catch(() => {}); };
+    const close = e => { if (e.data?.kind === 'close_call') setConfirmClose(me.id === m.host ? 'end' : 'leave'); };
+    const beforeUnload = e => { if (!leaving.current) { e.preventDefault(); e.returnValue = ''; } };
+    if (!desktop) window.addEventListener('beforeunload', beforeUnload);
+    nativeAction('call_active', { active: true });
     desktop?.addEventListener('message', close);
     window.addEventListener('pagehide', unload);
     return () => {
       live = false; clearInterval(timer); window.removeEventListener('pagehide', unload);
       desktop?.removeEventListener('message', close);
+      window.removeEventListener('beforeunload', beforeUnload);
+      nativeAction('call_active', { active: false });
     };
   }, [session]);
   const admitted = (self?.status || entry.status) === 'admitted';
@@ -135,12 +146,12 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
     if (!settings || !mediaDevices?.enumerateDevices) return;
     let live = true;
     const refresh = () => mediaDevices.enumerateDevices().then(all => {
-      if (live) setDevices(all.filter(d => d.kind === 'audioinput' && d.deviceId && d.deviceId !== 'default'));
+      if (live) setDevices(all.filter(d => d.deviceId && d.deviceId !== 'default'));
     }).catch(e => { if (live) fail(e.message); });
     refresh();
     mediaDevices.addEventListener('devicechange', refresh);
     return () => { live = false; mediaDevices.removeEventListener('devicechange', refresh); };
-  }, [settings, mic]);
+  }, [settings, mic, visual.source]);
   const active = rows.filter(
       (x) => x.status === 'admitted' && x.seen > now - 90000,
     ),
@@ -148,7 +159,9 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
   const peerName = (id) =>
     members.find((x) => x.id === id)?.name || 'Team member';
   function pulse() {
-    return command('pulse', facts.current);
+    const next = () => alive.current && !leaving.current ? command('pulse', { ...facts.current }) : undefined;
+    pulses.current = pulses.current.catch(() => {}).then(next);
+    return pulses.current;
   }
   useEffect(() => {
     alive.current = true;
@@ -166,24 +179,23 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
       },
       (e) => fail(e.message),
     );
-    const timer = setInterval(
-      () =>
-        pulse().catch((e) => {
-          if (alive.current) exit(e.message);
-        }),
-      20000,
-    );
+    const heartbeat = () => pulse().catch(e => {
+      if (!alive.current || leaving.current) return;
+      if (['functions/permission-denied','functions/failed-precondition','functions/unauthenticated'].includes(e.code)) exit(e.message);
+    });
+    const timer = setInterval(heartbeat, 20000);
+    window.addEventListener('online', heartbeat);
     return () => {
       alive.current = false;
       off();
       clearInterval(timer);
       voice.current?.getTracks().forEach((t) => t.stop());
-      display.current?.getTracks().forEach((t) => t.stop());
+      window.removeEventListener('online', heartbeat);
       if (!leaving.current) command('leave').catch(() => {});
     };
   }, [api, m.id, session]);
   useEffect(() => {
-    if (m.ended || m.end <= now) exit('Meeting ended.');
+    if ((m.ended || m.end <= now) && !leaving.current) { leaving.current = true; command('leave').catch(() => {}); exit(); }
   }, [m.ended, m.end, now]);
   useEffect(() => {
     if (!admitted) return;
@@ -208,6 +220,18 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
           },
         });
         media.current = engine;
+        video.current = callVideo({
+          devices: navigator.mediaDevices,
+          send: track => engine.video(track),
+          changed: next => {
+            if (!live) return;
+            setVisual(next);
+            facts.current.camera = next.source === 'camera';
+            facts.current.sharing = next.source === 'screen';
+            pulse().catch(e => { if (live) fail(e.message); });
+          },
+          failed: e => { if (live) fail(e.message); },
+        });
         setReady(true);
       })
       .catch((e) => {
@@ -215,7 +239,10 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
       });
     return () => {
       live = false;
+      video.current?.close();
+      video.current = null;
       engine?.close();
+      setReady(false);
       media.current = null;
     };
   }, [api, m.id, admitted, session]);
@@ -253,40 +280,12 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
     setMic(track.enabled);
     await pulse();
   }
-  async function stopShare() {
-    const stream = display.current;
-    display.current = null;
-    stream?.getTracks().forEach((t) => {
-      t.onended = null;
-      t.stop();
-    });
-    if (!alive.current) return;
-    setScreen(null);
-    facts.current.sharing = false;
-    await media.current?.display(null);
-    await pulse();
+  async function finish() {
+    if (confirmClose === 'leave') return leave();
+    leaving.current = true;
+    try { await command('end'); exit(); }
+    catch (e) { leaving.current = false; throw e; }
   }
-  async function share() {
-    if (display.current) return stopShare();
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
-      audio: false,
-    });
-    if (!alive.current) {
-      stream.getTracks().forEach((t) => t.stop());
-      return;
-    }
-    const track = stream.getVideoTracks()[0];
-    track.onended = () => stopShare().catch((e) => fail(e.message));
-    display.current = stream;
-    setScreen(stream);
-    facts.current.sharing = true;
-    await media.current.display(track);
-    await pulse();
-  }
-  const sharing = active.filter(
-    (x) => x.sharing && (x.uid === me.id ? screen : remote[x.uid]),
-  );
   return createPortal(
     <div
       className="call-overlay"
@@ -296,16 +295,16 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
     >
       <header>
         <div>
-          <small>Voice meeting</small>
+          <small>Meeting</small>
           <h2>{m.title}</h2>
         </div>
         <span>
-          <Users size={16} /> {active.length} in call
+          <Users size={16} /> {active.length} in call <WindowPin />
         </span>
       </header>
       <main>
         {settings && admitted && <section className="call-settings" aria-label="Call settings">
-          <div className="section-line"><h3>Audio settings</h3><Btn onClick={() => showSettings(false)}>Done</Btn></div>
+          <div className="section-line"><h3>Audio and video</h3><Btn onClick={() => showSettings(false)}>Done</Btn></div>
           <Label name="Microphone">
             <select value={input} disabled={job.busy} onChange={e => {
               const device = e.target.value;
@@ -315,7 +314,17 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
               });
             }}>
               <option value="">System default</option>
-              {devices.map((d, i) => <option value={d.deviceId} key={d.deviceId}>{d.label || 'Microphone ' + (i + 1)}</option>)}
+              {devices.filter(d => d.kind === 'audioinput').map((d, i) => <option value={d.deviceId} key={d.deviceId}>{d.label || 'Microphone ' + (i + 1)}</option>)}
+            </select>
+          </Label>
+          <Label name="Camera">
+            <select value={cameraId} disabled={!ready || job.busy} onChange={e => {
+              const id = e.target.value;
+              job.run(async () => { await video.current.select(id); setCameraId(id); });
+            }}>
+              <option value="">System default</option>
+              {devices.filter(d => d.kind === 'videoinput').map((d,i) =>
+                <option key={d.deviceId} value={d.deviceId}>{d.label || 'Camera ' + (i+1)}</option>)}
             </select>
           </Label>
           <Label name={'Speaker volume · ' + Math.round(volume * 100) + '%'}>
@@ -335,21 +344,13 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
           </div>
         ) : (
           <>
-            {sharing.map((x) => (
-              <section className="screen-stage" key={x.session}>
-                <Media
-                  stream={x.uid === me.id ? screen : remote[x.uid]}
-                  video
-                  muted
-                />
-                <small>{peerName(x.uid)} is sharing</small>
-              </section>
-            ))}
             <div className="call-tiles">
               {active.map((x) => (
                 <Participant key={x.session} person={members.find(p => p.id === x.uid)}
                   name={peerName(x.uid)} self={x.uid === me.id} context={context} volume={volume}
                   stream={x.uid === me.id ? voice.current : remote[x.uid]}
+                  visual={x.uid === me.id ? visual.stream : remote[x.uid]}
+                  source={x.uid === me.id ? visual.source : x.sharing ? 'screen' : x.camera ? 'camera' : ''}
                   muted={x.uid === me.id ? !mic : x.muted} state={states[x.uid]} />
               ))}
             </div>
@@ -406,34 +407,31 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
             >
               {mic ? 'Mute' : 'Unmute'}
             </Btn>
+            <Btn icon={visual.source === 'camera' ? Video : VideoOff}
+              disabled={!ready || job.busy || visual.source === 'screen'}
+              onClick={() => job.run(() => video.current.camera())}>
+              {visual.source === 'camera' ? 'Turn camera off' : 'Turn camera on'}
+            </Btn>
             <Btn
               icon={MonitorUp}
               disabled={!ready || job.busy}
-              onClick={() => job.run(share)}
+              onClick={() => job.run(() => video.current.share())}
             >
-              {screen ? 'Stop sharing' : 'Share screen'}
+              {visual.source === 'screen' ? 'Stop sharing' : 'Share screen'}
             </Btn>
           </>
         )}
-        {!desktop && <Btn onClick={() => job.run(() => document.fullscreenElement ?
-          document.exitFullscreen() : document.documentElement.requestFullscreen())}>Toggle full screen</Btn>}
-        <Btn kind="danger" icon={PhoneOff} disabled={job.busy} onClick={() => job.run(leave)}>
+        <Btn kind="danger" icon={PhoneOff} disabled={job.busy} onClick={() => setConfirmClose('leave')}>
           Leave meeting
         </Btn>
-        {host && (
-          <Btn
-            disabled={job.busy}
-            onClick={() =>
-              job.run(async () => {
-                await command('end');
-                exit();
-              })
-            }
-          >
-            End for everyone
-          </Btn>
-        )}
+        {host && <Btn disabled={job.busy} onClick={() => setConfirmClose('end')}>End for everyone</Btn>}
       </footer>
+      {confirmClose && <Modal title={confirmClose === 'end' ? 'End meeting for everyone?' : 'Leave this meeting?'}
+        onClose={() => !job.busy && setConfirmClose('')}>
+        <div className="form-body"><p>{confirmClose === 'end' ? 'The meeting will end for every participant and this window will close.' : 'Your camera, microphone and screen sharing will stop, and this window will close.'}</p><ErrorText error={job.error}/></div>
+        <footer><Btn autoFocus disabled={job.busy} onClick={() => setConfirmClose('')}>Stay in meeting</Btn>
+        <Btn kind="danger" disabled={job.busy} onClick={() => job.run(finish)}>{confirmClose === 'end' ? 'End meeting and close' : 'Leave and close'}</Btn></footer>
+      </Modal>}
     </div>,
     document.body,
   );

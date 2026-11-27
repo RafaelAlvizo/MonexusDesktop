@@ -51,7 +51,7 @@ function Plan({ api, me, members, context, close, created }) {
   const [title, setTitle] = useState(
       channel
         ? channel.kind === 'direct'
-          ? 'Voice call with ' + [me.name, channel.name].join(' & ')
+          ? 'Call with ' + [me.name, channel.name].join(' & ')
           : channel.name + ' meeting'
         : instant ? me.name + '’s meeting' : '',
     ),
@@ -90,7 +90,7 @@ function Plan({ api, me, members, context, close, created }) {
     job = useJob();
   return (
     <Modal
-      title={instant ? 'Start voice call' : 'Schedule a meeting'}
+      title={instant ? 'Start call' : 'Schedule a meeting'}
       subtitle={channel?.name || 'Calendar'}
       onClose={() => !job.busy && close()}
     >
@@ -439,10 +439,11 @@ export default function Meetings({
     if (joining.current || call) return;
     joining.current = true;
     const sessionKey = 'monexus.call.' + me.id + '.' + m.id;
-    const session = sessionStorage.getItem(sessionKey) || crypto.randomUUID();
-    sessionStorage.setItem(sessionKey, session);
+    const previousSession = sessionStorage.getItem(sessionKey);
+    const session = crypto.randomUUID();
     try {
-      const result = await api.command('meeting.join', { id: m.id, session });
+      const result = await api.command('meeting.join', { id: m.id, session, previousSession });
+      sessionStorage.setItem(sessionKey, session);
       localStorage.setItem(seen(m.id, 'open'), '1');
       setInvite(null);
       setCall({ id: m.id, room: m, session, ...result });
@@ -498,7 +499,7 @@ export default function Meetings({
             <div className="row">
               {hub && (
                 <Btn icon={Phone} onClick={() => setPlan({ mode: 'now' })}>
-                  Start voice call
+                  Start call
                 </Btn>
               )}
               <Btn

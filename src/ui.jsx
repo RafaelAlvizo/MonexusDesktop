@@ -7,6 +7,7 @@ import {
   ArrowDownToLine,
   Paperclip,
   LoaderCircle,
+  Pin,
 } from 'lucide-react';
 export const humanError = (e) =>
   String(e?.message || e || 'Request failed.').replace(/^Firebase:\s*/, '');
@@ -29,6 +30,18 @@ export function Btn({ icon: Icon, children, kind = '', ...p }) {
       {Icon && <Icon size={16} />} {children}
     </button>
   );
+}
+export function WindowPin() {
+  const [pinned, setPinned] = useState(false);
+  useEffect(() => {
+    if (!desktop) return;
+    const receive = e => { if (e.data?.kind === 'pin_state') setPinned(e.data.pinned); };
+    desktop.addEventListener('message', receive);
+    nativeAction('get_pin');
+    return () => desktop.removeEventListener('message', receive);
+  }, []);
+  return desktop && <IconButton icon={Pin} label={pinned ? 'Unpin window' : 'Pin window'}
+    aria-pressed={pinned} onClick={() => nativeAction('toggle_pin')} />;
 }
 export function Avatar({ person, small = false }) {
   const name = person?.name || 'Unassigned',

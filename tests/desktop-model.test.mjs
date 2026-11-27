@@ -1,11 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachmentType } from '../src/attachmentTypes.mjs';
+import { callVideo } from '../src/callVideo.mjs';
 import {
   boardTemplate,
   channelAllows,
   figmaEmbed,cleanAcl,mayContribute,
 } from '../functions/core/model.mjs';
+
+test('a cancelled share keeps the camera and closing during capture releases the late stream', async () => {
+  const track = () => ({readyState:'live', stop() { this.readyState='ended'; }});
+  const stream = t => ({getTracks:()=>[t], getVideoTracks:()=>[t]});
+  const first=track(), late=track();
+  let finishCapture, sent, changes=0;
+  const devices = {
+    getUserMedia: async () => stream(first),
+    getDisplayMedia: async () => { throw Error('Cancelled'); },
+  };
+  const call = callVideo({devices, send: async t => { sent=t; }, changed: () => changes++, failed: assert.fail});
+  await call.camera();
+  await assert.rejects(call.share(), /Cancelled/);
+  assert.equal(sent,first);
+  assert.equal(first.readyState,'live');
+  devices.getDisplayMedia = () => new Promise(resolve => { finishCapture=resolve; });
+  const capture = call.share();
+  await Promise.resolve();
+  call.close();
+  finishCapture(stream(late)); await capture;
+  assert.equal(first.readyState,'ended');
+  assert.equal(late.readyState,'ended');
+  assert.equal(changes,1);
+});
 
 test('older uploads with generic MIME types still select the correct preview', () => {
   const cases = [

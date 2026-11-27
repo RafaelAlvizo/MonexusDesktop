@@ -1,4 +1,4 @@
-// A single audio and screen transceiver per peer keeps mute and sharing changes in the same call.
+// Camera and screen share switch tracks on the same negotiated video transceiver.
 export function voiceRoom({
   api,
   room,
@@ -12,7 +12,7 @@ export function voiceRoom({
     pending = new Map();
   let closed = false,
     mic = null,
-    screen = null;
+    videoTrack = null;
   function dispose(p) {
     clearTimeout(p.retry);
     p.pc.onconnectionstatechange = null;
@@ -86,7 +86,7 @@ export function voiceRoom({
           if (kind !== 'audio' && kind !== 'video') continue;
           p[kind] = transceiver;
           transceiver.direction = 'sendrecv';
-          await transceiver.sender.replaceTrack(kind === 'audio' ? mic : screen);
+          await transceiver.sender.replaceTrack(kind === 'audio' ? mic : videoTrack);
         }
         await p.pc.setLocalDescription(await p.pc.createAnswer());
         await send(p);
@@ -133,7 +133,7 @@ export function voiceRoom({
     };
     queue(p, async () => {
       await audio?.sender.replaceTrack(mic);
-      await video?.sender.replaceTrack(screen);
+      await video?.sender.replaceTrack(videoTrack);
     });
     if (p.initiator) offer(p);
     if (pending.has(row.session)) {
@@ -157,8 +157,8 @@ export function voiceRoom({
         [...peers.values()].map((p) => p.audio?.sender.replaceTrack(track)),
       );
     },
-    async display(track) {
-      screen = track;
+    async video(track) {
+      videoTrack = track;
       await Promise.all(
         [...peers.values()].map((p) => p.video?.sender.replaceTrack(track)),
       );

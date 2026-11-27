@@ -357,6 +357,27 @@ function Feed({
     .filter((m) => m.id !== me.id && typing[m.id] > clock - 6000)
     .map((m) => m.name);
   const latest = recent[recent.length - 1]?.id;
+  const acknowledged = useRef('');
+  useEffect(() => {
+    if (!latest || pinned) return;
+    let pending = false, live = true, retry;
+    const acknowledge = () => {
+      if (!live || document.hidden || !document.hasFocus() || pending || latest === acknowledged.current) return;
+      pending = true;
+      api.command('channel.read', { channel: ch.id, id: latest })
+        .then(() => { if (live) acknowledged.current = latest; })
+        .catch(() => { if (live) retry = setTimeout(acknowledge, 5000); })
+        .finally(() => { pending = false; });
+    };
+    acknowledge();
+    window.addEventListener('focus', acknowledge);
+    document.addEventListener('visibilitychange', acknowledge);
+    return () => {
+      live = false; clearTimeout(retry);
+      window.removeEventListener('focus', acknowledge);
+      document.removeEventListener('visibilitychange', acknowledge);
+    };
+  }, [api, ch.id, latest, pinned]);
   useEffect(() => {
     if (follow.current && stream.current)
       stream.current.scrollTop = stream.current.scrollHeight;
@@ -1060,6 +1081,15 @@ export default function Channels({
   }, [api, initialPeer]);
   const [expanded, expand] = useState(true),
     [hiddenOpen, showHidden] = useState(false);
+  const [activity, setActivity] = useState([]);
+  useEffect(() => api.watchUnreadConversations(setActivity, e => { setActivity([]); tell(e); }), [api]);
+  const unknownChannels = activity.filter(a => !a.peer && !list.some(c => c.id === a.channel))
+    .map(a => a.channel).sort().join(',');
+  useEffect(() => {
+    if (unknownChannels) refresh(n => n + 1);
+  }, [unknownChannels]);
+  const unreadPeers = new Set(activity.map(a => a.peer).filter(Boolean));
+  const unreadChannels = new Set(activity.filter(a => !a.peer).map(a => a.channel));
   const storageKey = 'monexus.conversations.' + me.id;
   const [order, setOrder] = useState(() => {
     try {
@@ -1114,6 +1144,11 @@ export default function Channels({
   }, [showing]);
   const rail = document.getElementById('conversation-navigation');
   const visibility = useJob();
+  const badges = [
+    ...members.filter(p => p.active && unreadPeers.has(p.id)).map(p => ['Direct messages',p.id]),
+    ...list.filter(c => c.kind !== 'direct' && unreadChannels.has(c.id)).map(c => ['Channels',c.id]),
+  ];
+  const hiddenUnread = badges.filter(([group,id]) => order.hidden?.[group]?.includes(id)).length;
   function setHidden(item, group, hidden) {
     visibility.run(async () => {
       const saved = await api.command('conversations.visibility', { group, id: item.id, hidden });
@@ -1202,6 +1237,8 @@ export default function Channels({
                 <Hash />
               ))}
               <span>{item.name}</span>
+              {(dm ? unreadPeers : unreadChannels).has(item.id) &&
+                <span className="unread-dot" aria-label="Unread messages" title="Unread messages" />}
             </button>
             <IconButton icon={hidden ? Eye : EyeOff} label={(hidden ? 'Unhide ' : 'Hide ') + item.name}
               disabled={!orderReady || visibility.busy} onClick={() => setHidden(item, group, !hidden)} />
@@ -1226,6 +1263,7 @@ export default function Channels({
               >
                 <MessagesSquare />
                 Channels{expanded ? <ChevronDown /> : <ChevronRight />}
+                {badges.length > 0 && <small className="unread-count" aria-label={badges.length + ' unread conversations'}>{badges.length}</small>}
               </button>
               {isAdmin(me) && (
                 <IconButton
@@ -1252,6 +1290,7 @@ export default function Channels({
                   onClick={() => showHidden(!hiddenOpen)}
                 >
                   {hiddenOpen ? <ChevronDown size={13}/> : <ChevronRight size={13}/>} Hidden
+                  {hiddenUnread > 0 && <small className="unread-count" aria-label={hiddenUnread + ' unread hidden conversations'}>{hiddenUnread}</small>}
                 </button>
                 {hiddenOpen && <div className="hidden-conversations">
                   {groupList(visible, 'Channels', false, true)}

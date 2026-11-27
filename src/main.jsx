@@ -37,6 +37,7 @@ import {
   Avatar,
   Btn,
   IconButton,
+  WindowPin,
   Modal,
   Label,
   ErrorText,
@@ -563,6 +564,7 @@ function App() {
             <ChevronRight size={13} />
             <strong>{title}</strong>
           </div>
+          {detached && <WindowPin />}
           {!detached && <div className="top-actions">
             {windowViews.has(view) && view !== 'channels' && <Btn icon={ExternalLink}
               onClick={() => popOut(view)}>Open in new window</Btn>}

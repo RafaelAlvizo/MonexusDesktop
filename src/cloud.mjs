@@ -392,6 +392,10 @@ async function getWorkspace(user) {
         fail,
       );
     },
+    watchUnreadConversations(cb, fail) {
+      return f.onSnapshot(f.query(f.collection(db, 'members', uid, 'conversationActivity'),
+        f.where('unread', '==', true)), snap => cb(snap.docs.map(d => ({ channel: d.id, peer: d.data().peer }))), fail);
+    },
     watchMessages(key, cb, fail, { pinned = false, limit = 50 } = {}) {
       const base = r.ref(rt, 'messages/' + key),
         q = pinned
