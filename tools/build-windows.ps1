@@ -23,6 +23,7 @@ Copy-Item (Join-Path $sdk 'runtimes\win-x64\native\WebView2Loader.dll') $stage
 $license = Get-ChildItem -LiteralPath $sdk -Filter 'LICENSE*' -File | Select-Object -First 1
 if ($license) { Copy-Item $license.FullName (Join-Path $stage 'WebView2-LICENSE.txt') }
 Copy-Item (Join-Path $rootPath 'dist') (Join-Path $stage 'web') -Recurse
+Copy-Item -LiteralPath (Join-Path $rootPath 'src/models/LICENSE.txt') -Destination (Join-Path $stage 'MediaPipe-LICENSE.txt')
 $fontLicense = Join-Path $rootPath 'node_modules\@fontsource-variable\inter\LICENSE'
 if (Test-Path $fontLicense) { Copy-Item $fontLicense (Join-Path $stage 'Inter-LICENSE.txt') }
 $icon = Join-Path $rootPath 'desktop\icons\icon.ico'

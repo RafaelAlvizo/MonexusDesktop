@@ -32,6 +32,43 @@ test('a cancelled share keeps the camera and closing during capture releases the
   assert.equal(changes,1);
 });
 
+test('background changes reuse the camera and restore the selected effect after a presentation', async () => {
+  function stream(name) {
+    const track = {name, readyState:'live', stop() { this.readyState='ended'; }};
+    return {getTracks:()=>[track], getVideoTracks:()=>[track]};
+  }
+  const cameras = [], outputs = [], sent = [];
+  const call = callVideo({
+    devices: {
+      getUserMedia: async () => { const raw=stream('camera'); cameras.push(raw); return raw; },
+      getDisplayMedia: async () => stream('screen'),
+    },
+    send: async track => { sent.push(track?.name); }, changed() {}, failed: assert.fail,
+    processCamera: async (input, effect) => {
+      assert.equal(input.getTracks()[0].readyState,'live');
+      if (effect.image === 'unreadable') throw Error('Image failed');
+      const output=stream(effect.mode); outputs.push(output);
+      return {stream:output, close:()=>output.getTracks()[0].stop()};
+    },
+  });
+  await call.background({mode:'blur'});
+  assert.equal(cameras.length,0);
+  await call.camera();
+  await call.background({mode:'image',image:'valid'});
+  assert.equal(cameras.length,1);
+  assert.equal(outputs[0].getTracks()[0].readyState,'ended');
+  await assert.rejects(call.background({mode:'image',image:'unreadable'}), /Image failed/);
+  assert.equal(outputs[1].getTracks()[0].readyState,'live');
+  await call.share();
+  assert.equal(cameras[0].getTracks()[0].readyState,'ended');
+  await call.share();
+  assert.equal(cameras.length,2);
+  await call.background({mode:'none'});
+  assert.deepEqual(sent,['blur','image','image','screen','image','camera']);
+  call.close();
+  assert.ok([...cameras,...outputs].every(s=>s.getTracks()[0].readyState==='ended'));
+});
+
 test('older uploads with generic MIME types still select the correct preview', () => {
   const cases = [
     ['Sidney Harbour Waterfront Friends.PNG', 'image'],

@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Mic, MicOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, Volume2 } from 'lucide-react';
+import { Mic, MicOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, Volume2, X, ImagePlus, Blend, Ban, Check as Tick, ChevronUp } from 'lucide-react';
 import { Avatar, Btn, ErrorText, Check, Label, Modal, WindowPin, useJob } from '../ui.jsx';
 import { voiceRoom } from '../voice.mjs';
 import { callVideo } from '../callVideo.mjs';
+import { prepareBackground, processCamera } from '../cameraEffects.mjs';
+import '../call.css';
 import { desktop, nativeAction } from '../native.mjs';
 
 function Media({ stream, video = false, muted = false, volume = 1 }) {
@@ -46,7 +48,7 @@ function Media({ stream, video = false, muted = false, volume = 1 }) {
     </>
   );
 }
-function Participant({ person, name, self, stream, visual, source, muted, state, context, volume }) {
+function Participant({ person, name, self, stream, visual, source, muted, state, context, volume, mirror }) {
   const [speaking, setSpeaking] = useState(false);
   const track = stream?.getAudioTracks()[0];
   useEffect(() => {
@@ -68,16 +70,30 @@ function Participant({ person, name, self, stream, visual, source, muted, state,
     return () => { clearInterval(timer); source.disconnect(); meter.disconnect(); };
   }, [track, muted, context]);
   const talking = speaking && !muted;
-  return <div className={'call-tile' + (talking ? ' speaking' : '')} data-source={source || 'off'}>
+  return <div className={'call-tile' + (talking ? ' speaking' : '')} data-source={source || 'off'}
+    data-mirror={self && source === 'camera' && mirror || undefined}>
     {visual && source ? <Media stream={visual} video muted /> : <Avatar person={person} />}
     {source === 'screen' && <small className="tile-share"><MonitorUp size={14}/> Sharing screen</small>}
-    <strong>{name}{self ? ' (you)' : ''}</strong>
-    <small>{muted ? <MicOff size={14}/> : <Mic size={14}/>}
-      {talking ? 'Speaking' : muted ? 'Muted' : self || state === 'connected' ? 'Listening' :
-        state === 'failed' ? 'Reconnecting' : 'Connecting'}
-    </small>
+    <div className="tile-name">
+      {muted ? <MicOff size={14} aria-label="Muted"/> : <Mic size={14} aria-label="Microphone on"/>}
+      <strong>{name}{self ? ' (you)' : ''}</strong>
+      <small className="tile-status">{talking ? 'Speaking' : muted ? 'Muted' : self || state === 'connected' ? 'Listening' :
+        state === 'failed' ? 'Reconnecting' : 'Connecting'}</small>
+    </div>
     {!self && stream && <Media stream={stream} volume={volume} />}
   </div>;
+}
+function Tool({ icon: Icon, label, children, tone = '', ...props }) {
+  return <button type="button" className={'call-tool ' + tone} aria-label={label} title={label} {...props}>
+    <Icon size={22} strokeWidth={1.7}/><span>{children}</span>
+  </button>;
+}
+function cameraPreferences(uid) {
+  try {
+    const saved = JSON.parse(localStorage.getItem('monexus.camera.' + uid)) || {};
+    const image = typeof saved.image === 'string' && saved.image.startsWith('data:image/jpeg;base64,') ? saved.image : '';
+    return { mirror: saved.mirror === true, image, mode: saved.mode === 'blur' || (image && saved.mode === 'image') ? saved.mode : 'none' };
+  } catch { return { mirror:false, mode:'none', image:'' }; }
 }
 export default function Call({ api, me, members, m, entry, exit, now }) {
   const [rows, setRows] = useState([]),
@@ -101,6 +117,32 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
     alive = useRef(true),
     facts = useRef({ muted: true, sharing: false, camera: false }),
     job = useJob();
+  const [appearance, setAppearance] = useState(() => cameraPreferences(me.id));
+  const [applyingBackground, setApplyingBackground] = useState(false);
+  const pref = useRef(appearance), upload = useRef(), panel = useRef(), settingsTrigger = useRef();
+  function remember(next) {
+    pref.current = next;
+    setAppearance(next);
+    try { localStorage.setItem('monexus.camera.' + me.id, JSON.stringify(next)); }
+    catch { fail('Your camera settings apply to this call. This device could not save them for next time.'); }
+  }
+  async function chooseBackground(mode, image = pref.current.image) {
+    setApplyingBackground(true);
+    try {
+      await video.current.background({ mode, image });
+      remember({ ...pref.current, mode, image });
+    } finally { setApplyingBackground(false); }
+  }
+  function openSettings(event, focus) {
+    settingsTrigger.current = event.currentTarget;
+    showSettings(focus || 'panel');
+  }
+  function closeSettings() { showSettings(false); settingsTrigger.current?.focus(); }
+  useEffect(() => {
+    if (!settings) return;
+    const target = settings === 'panel' ? panel.current : panel.current?.querySelector('[data-device="' + settings + '"]');
+    target?.focus();
+  }, [settings]);
   const session = entry.session,
     command = (action, data = {}) =>
       api.command('meeting.' + action, { id: m.id, session, ...data });
@@ -221,7 +263,7 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
         });
         media.current = engine;
         video.current = callVideo({
-          devices: navigator.mediaDevices,
+          devices: navigator.mediaDevices, initialEffect: pref.current, processCamera,
           send: track => engine.video(track),
           changed: next => {
             if (!live) return;
@@ -293,20 +335,46 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
       aria-modal="true"
       aria-label={m.title}
     >
-      <header>
-        <div>
-          <small>Meeting</small>
-          <h2>{m.title}</h2>
-        </div>
-        <span>
-          <Users size={16} /> {active.length} in call <WindowPin />
-        </span>
+      <header className="call-header">
+        <div className="meeting-identity"><span className="meeting-mark" aria-hidden="true">M</span><h2>{m.title}</h2></div>
+        <div className="meeting-info"><span aria-label={active.length + ' in call'}><Users size={15}/>{active.length}</span><WindowPin /></div>
       </header>
-      <main>
-        {settings && admitted && <section className="call-settings" aria-label="Call settings">
-          <div className="section-line"><h3>Audio and video</h3><Btn onClick={() => showSettings(false)}>Done</Btn></div>
+      <main className={'call-main' + (settings ? ' with-settings' : '')}>
+        {settings && admitted && <section className="call-settings" aria-label="Call settings" ref={panel} tabIndex={-1}
+          onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); closeSettings(); } }}>
+          <header><h3>Call settings</h3><button className="call-icon" type="button" aria-label="Done" title="Close settings" onClick={closeSettings}><X size={19}/></button></header>
+          <div className="call-settings-body">
+          <h4>Camera &amp; background</h4>
+          <div className="camera-preview" data-mirror={appearance.mirror || undefined}>
+            {visual.source === 'camera' ? <Media stream={visual.stream} video muted/> : <><Avatar person={me}/><small>{visual.source === 'screen' ? 'Sharing your screen' : 'Camera is off'}</small></>}
+          </div>
+          <Label name="Camera">
+            <select data-device="camera" value={cameraId} disabled={!ready || job.busy} onChange={e => {
+              const id = e.target.value;
+              job.run(async () => { await video.current.select(id); setCameraId(id); });
+            }}>
+              <option value="">System default</option>
+              {devices.filter(d => d.kind === 'videoinput').map((d,i) =>
+                <option key={d.deviceId} value={d.deviceId}>{d.label || 'Camera ' + (i+1)}</option>)}
+            </select>
+          </Label>
+          <Check checked={appearance.mirror} onChange={e => remember({ ...pref.current, mirror:e.target.checked })}>Mirror my self-view</Check>
+          <fieldset className="background-choices" disabled={!ready || job.busy}><legend>Background</legend>
+            {[['none','None',Ban],['blur','Blur',Blend],...(appearance.image ? [['image','My image',null]] : [])].map(([mode,name,Icon]) =>
+              <button type="button" key={mode} aria-pressed={appearance.mode === mode} onClick={() => job.run(() => chooseBackground(mode))}>
+                <span className={'effect-swatch ' + mode}>{Icon ? <Icon size={21}/> : <img alt="" src={appearance.image}/>}
+                  {appearance.mode === mode && <i><Tick size={11}/></i>}</span>{name}
+              </button>)}
+            <button type="button" onClick={() => upload.current.click()} aria-label="Upload background image"><span className="effect-swatch upload"><ImagePlus size={21}/></span>Upload</button>
+          </fieldset>
+          {applyingBackground && <small role="status">Applying background…</small>}
+          <input type="file" hidden ref={upload} accept="image/jpeg,image/png,image/webp" aria-label="Background image file" onChange={e => {
+            const file=e.target.files?.[0]; e.target.value='';
+            if (file) job.run(async () => chooseBackground('image', await prepareBackground(file)));
+          }}/>
+          <h4>Audio</h4>
           <Label name="Microphone">
-            <select value={input} disabled={job.busy} onChange={e => {
+            <select data-device="mic" value={input} disabled={job.busy} onChange={e => {
               const device = e.target.value;
               job.run(async () => {
                 if (voice.current) await captureMicrophone(device, mic);
@@ -317,25 +385,19 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
               {devices.filter(d => d.kind === 'audioinput').map((d, i) => <option value={d.deviceId} key={d.deviceId}>{d.label || 'Microphone ' + (i + 1)}</option>)}
             </select>
           </Label>
-          <Label name="Camera">
-            <select value={cameraId} disabled={!ready || job.busy} onChange={e => {
-              const id = e.target.value;
-              job.run(async () => { await video.current.select(id); setCameraId(id); });
-            }}>
-              <option value="">System default</option>
-              {devices.filter(d => d.kind === 'videoinput').map((d,i) =>
-                <option key={d.deviceId} value={d.deviceId}>{d.label || 'Camera ' + (i+1)}</option>)}
-            </select>
-          </Label>
           <Label name={'Speaker volume · ' + Math.round(volume * 100) + '%'}>
             <input type="range" min="0" max="1" step=".01" value={volume}
               onChange={e => setVolume(Number(e.target.value))}/>
           </Label>
+          {host && <h4>Admission</h4>}
           {host && <Check checked={m.auto} onChange={e =>
             command('policy', { auto: e.target.checked }).catch(e => fail(e.message))}>
             Automatically admit invited people
           </Check>}
+          <ErrorText error={error || job.error} />
+          </div>
         </section>}
+        <div className="meeting-stage">
         {!admitted ? (
           <div className="lobby">
             <Users size={40} />
@@ -344,10 +406,13 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
           </div>
         ) : (
           <>
-            <div className="call-tiles">
+            <div className="call-tiles" style={{
+              '--cols': active.length > 4 ? 3 : 2, '--rows': Math.ceil(active.length / (active.length > 4 ? 3 : 2)),
+              '--narrow-rows': Math.ceil(active.length / 2),
+            }} data-count={active.length} data-sharing={active.some(x => x.sharing) || undefined}>
               {active.map((x) => (
                 <Participant key={x.session} person={members.find(p => p.id === x.uid)}
-                  name={peerName(x.uid)} self={x.uid === me.id} context={context} volume={volume}
+                  name={peerName(x.uid)} self={x.uid === me.id} mirror={appearance.mirror} context={context} volume={volume}
                   stream={x.uid === me.id ? voice.current : remote[x.uid]}
                   visual={x.uid === me.id ? visual.stream : remote[x.uid]}
                   source={x.uid === me.id ? visual.source : x.sharing ? 'screen' : x.camera ? 'camera' : ''}
@@ -394,42 +459,34 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
               ))}
           </div>
         )}
-        <ErrorText error={error || job.error} />
+        {!settings && <ErrorText error={error || job.error} />}
+        </div>
       </main>
-      <footer>
-        {admitted && (
-          <>
-            <Btn icon={Settings2} aria-expanded={settings} onClick={() => showSettings(!settings)}>Call settings</Btn>
-            <Btn
-              icon={mic ? Mic : MicOff}
-              disabled={!ready || job.busy}
-              onClick={() => job.run(toggleMic)}
-            >
-              {mic ? 'Mute' : 'Unmute'}
-            </Btn>
-            <Btn icon={visual.source === 'camera' ? Video : VideoOff}
-              disabled={!ready || job.busy || visual.source === 'screen'}
-              onClick={() => job.run(() => video.current.camera())}>
-              {visual.source === 'camera' ? 'Turn camera off' : 'Turn camera on'}
-            </Btn>
-            <Btn
-              icon={MonitorUp}
-              disabled={!ready || job.busy}
-              onClick={() => job.run(() => video.current.share())}
-            >
-              {visual.source === 'screen' ? 'Stop sharing' : 'Share screen'}
-            </Btn>
-          </>
-        )}
-        <Btn kind="danger" icon={PhoneOff} disabled={job.busy} onClick={() => setConfirmClose('leave')}>
-          Leave meeting
-        </Btn>
-        {host && <Btn disabled={job.busy} onClick={() => setConfirmClose('end')}>End for everyone</Btn>}
+      <footer className="call-controls">
+        {admitted && <>
+          <div className="device-tools">
+            <div className="split-tool"><Tool icon={mic ? Mic : MicOff} label={mic ? 'Mute' : 'Unmute'} tone={mic ? '' : 'device-off'}
+              disabled={!ready || job.busy} onClick={() => job.run(toggleMic)}>Audio</Tool>
+              <button className="device-chevron" aria-label="Microphone settings" title="Microphone settings" onClick={e => openSettings(e,'mic')}><ChevronUp size={14}/></button></div>
+            <div className="split-tool"><Tool icon={visual.source === 'camera' ? Video : VideoOff} tone={visual.source === 'camera' ? '' : 'device-off'}
+              label={visual.source === 'camera' ? 'Turn camera off' : 'Turn camera on'} disabled={!ready || job.busy || visual.source === 'screen'}
+              onClick={() => job.run(() => video.current.camera())}>Video</Tool>
+              <button className="device-chevron" aria-label="Video settings" title="Video settings" onClick={e => openSettings(e,'camera')}><ChevronUp size={14}/></button></div>
+          </div>
+          <div className="meeting-tools">
+            <Tool icon={MonitorUp} label={visual.source === 'screen' ? 'Stop sharing' : 'Share screen'} tone="share-tool" aria-pressed={visual.source === 'screen'}
+              disabled={!ready || job.busy} onClick={() => job.run(() => video.current.share())}>{visual.source === 'screen' ? 'Stop share' : 'Share'}</Tool>
+            <Tool icon={Settings2} label="Call settings" aria-expanded={!!settings} onClick={e => settings ? closeSettings() : openSettings(e)}>Settings</Tool>
+          </div>
+        </>}
+        <Tool icon={PhoneOff} tone="exit-tool" label={host ? 'End for everyone' : 'Leave meeting'} disabled={job.busy}
+          onClick={() => setConfirmClose(host ? 'end' : 'leave')}>{host ? 'End' : 'Leave'}</Tool>
       </footer>
       {confirmClose && <Modal title={confirmClose === 'end' ? 'End meeting for everyone?' : 'Leave this meeting?'}
         onClose={() => !job.busy && setConfirmClose('')}>
         <div className="form-body"><p>{confirmClose === 'end' ? 'The meeting will end for every participant and this window will close.' : 'Your camera, microphone and screen sharing will stop, and this window will close.'}</p><ErrorText error={job.error}/></div>
-        <footer><Btn autoFocus disabled={job.busy} onClick={() => setConfirmClose('')}>Stay in meeting</Btn>
+        <footer>{host && confirmClose === 'end' && <Btn disabled={job.busy} onClick={() => setConfirmClose('leave')}>Leave without ending</Btn>}
+        <Btn autoFocus disabled={job.busy} onClick={() => setConfirmClose('')}>Stay in meeting</Btn>
         <Btn kind="danger" disabled={job.busy} onClick={() => job.run(finish)}>{confirmClose === 'end' ? 'End meeting and close' : 'Leave and close'}</Btn></footer>
       </Modal>}
     </div>,
