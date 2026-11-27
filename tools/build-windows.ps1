@@ -20,7 +20,9 @@ $bootstrapper = Join-Path $cache 'MicrosoftEdgeWebview2Setup.exe'
 if (!(Test-Path -LiteralPath $bootstrapper)) {
     Invoke-WebRequest -UseBasicParsing 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $bootstrapper
 }
-$signature = Get-AuthenticodeSignature -LiteralPath $bootstrapper
+# npm can inherit PowerShell 7's module search path when it starts Windows PowerShell.
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
+$signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $bootstrapper
 if ($signature.Status -ne 'Valid' -or
     $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -ne 'Microsoft Corporation') {
     throw 'The WebView2 installer must have a valid Microsoft signature.'
