@@ -1,3 +1,4 @@
+import AttachmentPreview from './views/AttachmentPreview.jsx';
 import React, { useEffect, useRef, useState } from 'react';
 import { desktop, nativeAction } from './native.mjs';
 import {
@@ -351,18 +352,7 @@ export function Attachments({ api, scope, canAdd }) {
           )}
         </div>
       )}
-      {page.items.map((f) => (
-        <button
-          key={f.id}
-          className="resource-row"
-          onClick={() => job.run(() => saveFile(api, f.id, f.name))}
-        >
-          <Paperclip size={15} />
-          <span>{f.name}</span>
-          <small>{Math.max(1, Math.round(f.size / 1024))} KB</small>
-          <ArrowDownToLine size={15} />
-        </button>
-      ))}
+      {page.items.map(file => <AttachmentPreview key={file.id} api={api} file={file} />)}
       {!page.loading && !page.items.length && (
         <span className="muted">No attachments yet.</span>
       )}

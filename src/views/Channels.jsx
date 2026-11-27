@@ -4,8 +4,9 @@ import {
   ChevronDown,
   ChevronRight,
   MessagesSquare,
-  ArrowUp,
-  ArrowDown,
+  Eye,
+  EyeOff,
+  ExternalLink,
   Trash2,
   Pencil,
   Phone,
@@ -13,7 +14,7 @@ import {
 } from 'lucide-react';
 import { PeoplePicker } from './Sharing.jsx';
 import { PollForm, PollResult, Roster } from './ChatTools.jsx';
-import { saveFile } from '../ui.jsx';
+import AttachmentPreview from './AttachmentPreview.jsx';
 import React, { useEffect, useState, useRef } from 'react';
 import {
   Plus,
@@ -215,62 +216,6 @@ function PersonIcon({ person, state = 'Offline' }) {
   );
 }
 
-function Preview({ api, file }) {
-  const [url, setUrl] = useState(''),
-    [error, setError] = useState('');
-  const kind = /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(file.mime)
-    ? 'image'
-    : /^video\/(mp4|webm|ogg)$/.test(file.mime)
-      ? 'video'
-      : /^audio\/(mpeg|mp4|ogg|wav|webm)$/.test(file.mime)
-        ? 'audio'
-        : '';
-  const [load, start] = useState(file.size <= 24 * 1024 * 1024);
-  useEffect(() => {
-    if (!kind || !load) return;
-    let live = true,
-      object;
-    api
-      .fileBlob(file.id)
-      .then((blob) => {
-        if (live) {
-          object = URL.createObjectURL(blob.slice(0, blob.size, file.mime));
-          setUrl(object);
-        }
-      })
-      .catch((e) => {
-        if (live) setError(e.message);
-      });
-    return () => {
-      live = false;
-      if (object) URL.revokeObjectURL(object);
-    };
-  }, [api, file.id, kind, load]);
-  return (
-    <div className="chat-preview">
-      {url &&
-        (kind === 'image' ? (
-          <img src={url} alt={file.name} />
-        ) : kind === 'video' ? (
-          <video controls preload="metadata" src={url} />
-        ) : (
-          <audio controls src={url} />
-        ))}
-      {kind && !load && (
-        <Btn onClick={() => start(true)}>Preview {file.name}</Btn>
-      )}
-      <button
-        className="text-btn"
-        onClick={() =>
-          saveFile(api, file.id, file.name).catch((e) => setError(e.message))
-        }
-      >
-        {file.name}
-      </button>
-      <ErrorText error={error} />
-    </div>
-  );
-}
 function MessageMedia({ api, channel, message }) {
   const files = useLoad(
     () =>
@@ -282,7 +227,7 @@ function MessageMedia({ api, channel, message }) {
   return (
     <>
       {(files.data?.items || []).map((file) => (
-        <Preview key={file.id} {...{ api, file }} />
+        <AttachmentPreview key={file.id} {...{ api, file }} />
       ))}
       {files.loading && <small>Loading attachment…</small>}
       <ErrorText error={files.error} />
@@ -303,6 +248,8 @@ function Feed({
   configure,
   presence,
   meeting,
+  onProfile,
+  popOut,
   initialDraft = '',
   consumeDraft,
 }) {
@@ -513,6 +460,8 @@ function Feed({
         attach(null);
       }
     });
+  const rosterMembers = members.filter(person => channelAllows(ch, person));
+  const peer = ch.kind === 'direct' && rosterMembers.find(person => person.id !== me.id);
   return (
     <div className="feed">
       <div className="section-line">
@@ -524,14 +473,16 @@ function Feed({
           ) : (
             <Hash size={20} />
           )}{' '}
-          {ch.name}
+          {peer ? <button className="person-link" onClick={() => onProfile(peer)}>{ch.name}</button> : ch.name}
         </h2>
         <div className="row wrap">
-          <IconButton
-            label="Channel members"
+          <Btn
+            aria-label="Channel members"
             icon={UsersRound}
             onClick={() => showRoster(true)}
-          />
+          >{rosterMembers.length} {rosterMembers.length === 1 ? 'member' : 'members'}</Btn>
+          {popOut && <IconButton icon={ExternalLink} label="Open conversation in new window"
+            onClick={() => popOut('channels', { channel: ch.id }, ch.name)} />}
           <Btn icon={Phone} onClick={() => meeting(ch, 'now')}>
             Call
           </Btn>
@@ -620,8 +571,10 @@ function Feed({
                   key={m.id}
                 >
                   <div className="row">
-                    <PersonIcon person={person} state={presence[m.by]} />
-                    <strong>{person?.name || 'Member'}</strong>
+                    <button className="person-link row" disabled={!person} onClick={() => onProfile(person)}>
+                      <PersonIcon person={person} state={presence[m.by]} />
+                      <strong>{person?.name || 'Member'}</strong>
+                    </button>
                     <small>
                       {new Date(m.at).toLocaleTimeString([], {
                         hour: 'numeric',
@@ -672,7 +625,7 @@ function Feed({
                           }
                         />
                       )}
-                      {m.hasMedia && (
+                      {m.hasMedia && media !== m.id && (
                         <MessageMedia api={api} channel={ch.id} message={m} />
                       )}
                       {(m.mentions || [])
@@ -896,9 +849,8 @@ function Feed({
       )}
       {roster && (
         <Roster
-          members={members.filter(
-            (m) => m.active && (ch.everyone || ch.users?.[m.id]),
-          )}
+          members={rosterMembers}
+          onProfile={person => { showRoster(false); onProfile(person); }}
           presence={presence}
           close={() => showRoster(false)}
         />
@@ -1031,6 +983,9 @@ export default function Channels({
   selected,
   showing,
   onSelect,
+  onProfile,
+  popOut,
+  initialPeer,
   tell,
 }) {
   const [list, setList] = useState([]),
@@ -1066,9 +1021,7 @@ export default function Channels({
   const raw =
     list.find((c) => c.id === selected) ||
     (direct?.id === selected ? direct : null) ||
-    (selected?.startsWith('pending_')
-      ? null
-      : list.find((c) => c.kind !== 'direct'));
+    (!selected && !initialPeer ? list.find((c) => c.kind !== 'direct') : null);
   const peerId =
     raw?.kind === 'direct'
       ? Object.keys(raw.users).find((uid) => uid !== me?.id)
@@ -1102,8 +1055,11 @@ export default function Channels({
       if (request === openRequest.current) onSelect(c.id);
     });
   }
-  const [expanded, expand] = useState(false),
-    [ordering, reorder] = useState(false);
+  useEffect(() => {
+    if (initialPeer) openDirect(initialPeer);
+  }, [api, initialPeer]);
+  const [expanded, expand] = useState(true),
+    [hiddenOpen, showHidden] = useState(false);
   const storageKey = 'monexus.conversations.' + me.id;
   const [order, setOrder] = useState(() => {
     try {
@@ -1119,7 +1075,7 @@ export default function Channels({
     api
       .command('conversations.order')
       .then((remote) => {
-        if (live && Object.keys(remote).length) {
+        if (live) {
           setOrder(remote);
           localStorage.setItem(storageKey, JSON.stringify(remote));
         }
@@ -1132,6 +1088,9 @@ export default function Channels({
       live = false;
     };
   }, [api, storageKey]);
+  useEffect(() => {
+    if (orderReady) localStorage.setItem(storageKey, JSON.stringify(order));
+  }, [order, orderReady, storageKey]);
   const sorted = (items, group) => {
     const ids = order[group] || [];
     const rank = (id) =>
@@ -1154,8 +1113,16 @@ export default function Channels({
     if (showing) expand(true);
   }, [showing]);
   const rail = document.getElementById('conversation-navigation');
-  const groupList = (items, group, dm) => {
-    const rows = sorted(items, group);
+  const visibility = useJob();
+  function setHidden(item, group, hidden) {
+    visibility.run(async () => {
+      const saved = await api.command('conversations.visibility', { group, id: item.id, hidden });
+      setOrder(current => ({ ...current, hidden: saved }));
+    });
+  }
+  const groupList = (items, group, dm, hidden = false) => {
+    const rows = sorted(items, group).filter(x => !!order.hidden?.[group]?.includes(x.id) === hidden);
+    if (hidden && !rows.length) return null;
     return (
       <>
         <h4>{group}</h4>
@@ -1168,13 +1135,19 @@ export default function Channels({
                   label: 'Open ' + item.name,
                   run: () => (dm ? openDirect(item.id) : onSelect(item.id)),
                 },
+                popOut && { label: 'Open in new window', run: () =>
+                  popOut('channels', dm ? { peer: item.id } : { channel: item.id }, item.name) },
+                dm && { label: 'View profile', run: () => onProfile(item) },
+                orderReady && { label: hidden ? 'Unhide' : 'Hide', run: () => setHidden(item, group, !hidden) },
                 orderReady &&
+                  !hidden &&
                   !query &&
                   i > 0 && {
                     label: 'Move up',
                     run: () => shift(rows, group, i, -1),
                   },
                 orderReady &&
+                  !hidden &&
                   !query &&
                   i < rows.length - 1 && {
                     label: 'Move down',
@@ -1183,7 +1156,7 @@ export default function Channels({
               ])
             }
             key={item.id}
-            draggable={orderReady && !query}
+            draggable={!hidden && orderReady && !query}
             onDragStart={(e) =>
               e.dataTransfer.setData(
                 'monexus/chat',
@@ -1200,9 +1173,13 @@ export default function Channels({
               if (!data) return;
               const [g, id] = JSON.parse(data);
               const from = rows.findIndex((x) => x.id === id);
-              if (g === group && from >= 0) shift(rows, group, from, i - from);
+              if (!hidden && g === group && from >= 0) shift(rows, group, from, i - from);
             }}
           >
+            {dm && <button className="dm-photo" aria-label={'View profile of ' + item.name}
+              onClick={() => onProfile(item)}>
+              <PersonIcon person={item} state={presence[item.id]} />
+            </button>}
             <button
               className={
                 'nav-item sub ' +
@@ -1219,31 +1196,15 @@ export default function Channels({
                 }
               }}
             >
-              {dm ? (
-                <PersonIcon person={item} state={presence[item.id]} />
-              ) : item.kind === 'announcement' ? (
+              {!dm && (item.kind === 'announcement' ? (
                 <Megaphone />
               ) : (
                 <Hash />
-              )}
+              ))}
               <span>{item.name}</span>
             </button>
-            {ordering && !query && (
-              <>
-                <IconButton
-                  icon={ArrowUp}
-                  label={'Move ' + item.name + ' up'}
-                  disabled={!i}
-                  onClick={() => shift(rows, group, i, -1)}
-                />
-                <IconButton
-                  icon={ArrowDown}
-                  label={'Move ' + item.name + ' down'}
-                  disabled={i === rows.length - 1}
-                  onClick={() => shift(rows, group, i, 1)}
-                />
-              </>
-            )}
+            <IconButton icon={hidden ? Eye : EyeOff} label={(hidden ? 'Unhide ' : 'Hide ') + item.name}
+              disabled={!orderReady || visibility.busy} onClick={() => setHidden(item, group, !hidden)} />
           </div>
         ))}
       </>
@@ -1286,16 +1247,20 @@ export default function Channels({
                 {groupList(visible, 'Channels', false)}
                 {groupList(people, 'Direct messages', true)}
                 <button
-                  disabled={!orderReady}
                   className="rail-order"
-                  onClick={() => {
-                    search('');
-                    reorder(!ordering);
-                  }}
+                  aria-expanded={hiddenOpen}
+                  onClick={() => showHidden(!hiddenOpen)}
                 >
-                  {ordering ? 'Done arranging' : 'Arrange conversations'}
+                  {hiddenOpen ? <ChevronDown size={13}/> : <ChevronRight size={13}/>} Hidden
                 </button>
-                <ErrorText error={listError || job.error} />
+                {hiddenOpen && <div className="hidden-conversations">
+                  {groupList(visible, 'Channels', false, true)}
+                  {groupList(people, 'Direct messages', true, true)}
+                  {![...visible.filter(x => order.hidden?.Channels?.includes(x.id)),
+                    ...people.filter(x => order.hidden?.['Direct messages']?.includes(x.id))].length &&
+                    <small>No hidden conversations</small>}
+                </div>}
+                <ErrorText error={listError || job.error || visibility.error} />
               </div>
             )}
           </>,
@@ -1307,7 +1272,7 @@ export default function Channels({
             {ch ? (
               <Feed
                 key={ch.id}
-                {...{ api, ch, me, members, tell, presence, meeting }}
+                {...{ api, ch, me, members, tell, presence, meeting, onProfile, popOut }}
                 initialDraft={drafts.current[peerId] || ''}
                 consumeDraft={() => delete drafts.current[peerId]}
                 configure={isAdmin(me) && !peerId ? () => setEdit(ch) : null}
@@ -1328,7 +1293,7 @@ export default function Channels({
                 </div>
               </div>
             ) : (
-              <Empty>Choose a channel or teammate in the sidebar.</Empty>
+              <Empty>{listError || job.error || (selected || initialPeer ? 'Opening conversation…' : 'Choose a channel or teammate in the sidebar.')}</Empty>
             )}
           </div>
         </div>

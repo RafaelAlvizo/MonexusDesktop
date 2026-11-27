@@ -200,19 +200,19 @@ function ShareNote({ note, members, close, apply }) {
     </Modal>
   );
 }
-export default function Notes({ api, me, members, contributions }) {
+export default function Notes({ api, me, members, contributions, initialNote, initialScope, popOut }) {
   const book = notebook(api),
     records = useSyncExternalStore(book.subscribe, book.get);
-  const [scope, setScope] = useState('mine'),
+  const [scope, setScope] = useState(initialScope === 'shared' ? 'shared' : 'mine'),
     [project, setProject] = useState(''),
-    [selected, select] = useState(''),
+    [selected, select] = useState(initialNote || ''),
     [search, find] = useState(''),
     [sort, setSort] = useState('updated'),
     [sharing, share] = useState(false),
     [expanded, expand] = useState(false),
     [deletion, confirm] = useState(null),
     [projectName, createProject] = useState(null),
-    [mobile, showEditor] = useState(false),
+    [mobile, showEditor] = useState(!!initialNote),
     [loadError, setError] = useState(''),
     [loaded, setLoaded] = useState(false);
   const job = useJob(),
@@ -424,6 +424,10 @@ export default function Notes({ api, me, members, contributions }) {
                       showEditor(true);
                     },
                   },
+                  popOut && n.rev && {
+                    label: 'Open note in new window',
+                    run: () => popOut('notes', { note: n.id, scope }, n.title || 'Notes'),
+                  },
                   n.owner === me.id && {
                     label: 'Share note',
                     run: () => {
@@ -471,6 +475,9 @@ export default function Notes({ api, me, members, contributions }) {
               <Btn onClick={() => expand(!expanded)}>
                 {expanded ? 'Show My Notes' : 'Hide My Notes'}
               </Btn>
+              {popOut && !!note.rev && <Btn onClick={() => popOut('notes', { note: note.id, scope }, note.title || 'Notes')}>
+                Pop out note
+              </Btn>}
               {owner && (
                 <Btn
                   onClick={() => confirm({ id: note.id, title: note.title })}

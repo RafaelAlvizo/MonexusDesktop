@@ -481,6 +481,7 @@ export const defaultPrefs = {
   theme: 'system',
   banners: true,
   sound: false,
+  clickSounds: false,
   preset: 'forest',
   color: '#2c6956',
   events: {},

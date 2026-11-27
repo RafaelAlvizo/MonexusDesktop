@@ -22,7 +22,7 @@ import {
   Menu,
   LogIn,
   ChevronDown,
-  LayoutGrid,
+  ExternalLink,
   ShieldCheck,
   ArrowUpRight,
   Download,
@@ -47,7 +47,6 @@ import Board from './views/Board.jsx';
 import Directory from './views/Directory.jsx';
 const Admin = lazy(() => import('./views/Admin.jsx')),
   Channels = lazy(() => import('./views/Channels.jsx')),
-  Canvas = lazy(() => import('./views/Canvas.jsx')),
   FigmaResource = lazy(() => import('./views/Figma.jsx')),
   Meetings = lazy(() => import('./views/Meetings.jsx')),
   Eod = lazy(() => import('./views/Eod.jsx')),
@@ -60,17 +59,19 @@ const nav = [
   ['boards', 'Boards', PanelsTopLeft],
   ['channels', 'Channels', MessagesSquare],
   ['inbox', 'Inbox', Inbox],
-  ['docs', 'Documentation', BookOpen],
   ['notes', 'Notes', NotebookPen],
-  ['eod', 'EOD', CalendarCheck],
-  ['drive', 'Drive', FolderClosed],
-  ['links', 'Apps & links', Link2],
-  ['vault', 'Sensitive data', KeyRound],
-  ['figma', 'Figma', FigmaIcon],
-  ['whiteboard', 'Whiteboards', LayoutGrid],
   ['meetings', 'Meetings', Phone],
   ['calendar', 'Calendar', CalendarDays],
+  ['docs', 'Documentation', BookOpen],
+  ['drive', 'Drive', FolderClosed],
+  ['vault', 'Sensitive data', KeyRound],
+  ['links', 'Apps & links', Link2],
+  ['figma', 'Figma', FigmaIcon],
+  ['eod', 'EOD', CalendarCheck],
 ];
+const windowViews = new Set(['notes', 'meetings', 'docs', 'drive', 'vault', 'channels']);
+const windowParams = new URLSearchParams(location.search);
+const detached = windowViews.has(windowParams.get('window')) && windowParams.get('window');
 function SignIn({ onClose, connect }) {
   const [mode, set] = useState('signIn'),
     [email, setEmail] = useState(''),
@@ -158,6 +159,7 @@ function SignIn({ onClose, connect }) {
   );
 }
 function App() {
+  const [profileId, setProfileId] = useState('');
   const [meetingRequest, requestMeeting] = useState(null);
   const [eodDate,setEodDate]=useState(null);
   const [api, setApi] = useState(null),
@@ -188,26 +190,28 @@ function App() {
   useEffect(() => api?.watchContributions(setContributions, tell), [api]);
   useEffect(() => {
     setUnread(0);
+    if (detached) return;
     return api?.watchUnread(setUnread, tell);
   }, [api]);
   useEffect(() => {
-    nativeAction('unread_badge', { count: unread });
+    if (!detached) nativeAction('unread_badge', { count: unread });
   }, [unread]);
   const connect = (next) => {
     restore.current++;
     localStorage.setItem('monexus.live', '1');
-    setChannelId('');
+    setChannelId(detached ? windowParams.get('channel') || '' : '');
     setSpace({ members: [], boards: [] });
     selectBoard('');
     const previous = localStorage.getItem('monexus.resource.' + next.uid);
-    setView(nav.some(([k]) => k === previous) ? previous : 'boards');
+    setView(detached || (nav.some(([k]) => k === previous) ? previous : 'boards'));
     requestMeeting(null);
     setApi(next);
     authDialog(false);
   };
   const leave = () => {
     restore.current++;
-    localStorage.removeItem('monexus.live');
+    if (!detached) localStorage.removeItem('monexus.live');
+    setProfileId('');
     setChannelId('');
     setSpace({ members: [], boards: [] });
     setApi(null);
@@ -228,7 +232,7 @@ function App() {
         })
         .catch((e) => {
           if (mounted.current && restore.current === token) {
-            localStorage.removeItem('monexus.live');
+            if (!detached) localStorage.removeItem('monexus.live');
             tell(e);
           }
         });
@@ -248,25 +252,61 @@ function App() {
       (e) => {
         if (live) {
           tell(e);
-          api.logout().catch(() => {});
+          if (!detached) api.logout().catch(() => {});
           leave();
         }
       },
     );
-    api
-      .command('settings.get')
-      .then((p) => {
-        if (live) setPrefs(p);
-      })
-      .catch(tell);
+    const offSettings = api.watchSettings(setPrefs, tell);
+    const offAuth = api.watchSession(() => {
+      if (live) leave();
+    });
     return () => {
       live = false;
       off();
+      offSettings();
+      offAuth();
     };
   }, [api]);
   const me = space.members.find((m) => m.id === api?.uid),
     boards = navigateOrder.sorted(space.boards, 'Boards', (b) => b.id),
     board = boards.find((b) => b.id === activeBoard) || boards[0];
+  const profile = space.members.find(person => person.id === profileId);
+  function popOut(view, params = {}, name = '') {
+    const url = new URL(location.pathname, location.origin);
+    url.search = new URLSearchParams({ window: view, ...params }).toString();
+    const title = name || nav.find(([key]) => key === view)?.[1];
+    if (desktop) nativeAction('open_window', { url: url.href, title });
+    else {
+      const child = window.open(url.href, '_blank', 'popup,width=960,height=720');
+      if (child) child.opener = null;
+      else tell('Allow pop-ups for Monexus to open a separate window.');
+    }
+  }
+  useEffect(() => {
+    if (detached) document.title = nav.find(([key]) => key === detached)[1] + ' · Monexus';
+  }, []);
+  useEffect(() => {
+    if (!api || !prefs.clickSounds) return;
+    let audio;
+    function click(event) {
+      if (!event.target.closest?.('button:not(:disabled),summary,input[type=checkbox],input[type=radio]')) return;
+      try {
+        audio ||= new AudioContext();
+        if (audio.state === 'suspended') audio.resume().catch(() => {});
+        const osc = audio.createOscillator(), gain = audio.createGain();
+        osc.frequency.setValueAtTime(660, audio.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(330, audio.currentTime + 0.035);
+        gain.gain.setValueAtTime(0.04, audio.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.035);
+        osc.connect(gain).connect(audio.destination);
+        osc.start();
+        osc.stop(audio.currentTime + 0.04);
+      } catch {}
+    }
+    document.addEventListener('click', click, true);
+    return () => { document.removeEventListener('click', click, true); audio?.close().catch(() => {}); };
+  }, [api, prefs.clickSounds]);
   useEffect(() => {
     document.documentElement.dataset.theme = prefs.theme;
     document.documentElement.dataset.palette = prefs.palette || 'forest';
@@ -291,7 +331,7 @@ function App() {
   }, [api, prefs.presence]);
   useEffect(
     () =>
-      api?.watchAlerts((e) => {
+      !detached && api ? api.watchAlerts((e) => {
         if(e.eodDay)window.dispatchEvent(new Event('monexus-eod-update'));
         if (!['Online', 'Idle'].includes(presence.current)) return;
         const p = settings.current;
@@ -318,12 +358,12 @@ function App() {
             osc.onended = () => ctx.close();
           } catch {}
         }
-      }, tell),
+      }, tell) : undefined,
     [api],
   );
   const go = (v) => {
       setView(v);
-      if (api) localStorage.setItem('monexus.resource.' + api.uid, v);
+      if (api && !detached) localStorage.setItem('monexus.resource.' + api.uid, v);
       if(v==='eod')setEodDate({day:''});
       setRail(false);
       setJump(null);
@@ -363,8 +403,11 @@ function App() {
     prefs,
     onPrefs: setPrefs,
     tell,
+    onProfile: person => setProfileId(person.id),
   };
-  return !api ? (
+  return !api && detached ? (
+    <main className="welcome"><p role="status">{notice || 'Open this window from your signed-in workspace.'}</p></main>
+  ) : !api ? (
     <main className="welcome">
       <section>
         <span className="mark">M</span>
@@ -391,8 +434,8 @@ function App() {
       <p role="status">Opening your workspace…</p>
     </main>
   ) : (
-    <div className="shell">
-      <aside className={'sidebar ' + (rail ? 'expanded' : '')}>
+    <div className={'shell' + (detached ? ' detached' : '')}>
+      {!detached && <aside className={'sidebar ' + (rail ? 'expanded' : '')}>
         <div className="brand">
           <span className="mark">M</span>
           <span>Monexus</span>
@@ -468,6 +511,7 @@ function App() {
                 'Resources',
                 k,
                 resources.map((r) => r[0]),
+                windowViews.has(k) ? [{ label: 'Open in new window', run: () => popOut(k) }] : [],
               )}
               onClick={() => go(k)}
             >
@@ -476,7 +520,6 @@ function App() {
             </button>
           ))}
         </div>
-        <QuickActions />
         <div className="side-bottom">
           {isAdmin(me) && (
             <button
@@ -503,23 +546,26 @@ function App() {
             <ChevronRight size={15} />
           </button>
         </div>
-      </aside>
+      </aside>}
+      <QuickActions />
       <main>
         <div className="topbar">
           <div className="crumb">
-            <span className="mobile-menu">
+            {!detached && <span className="mobile-menu">
               <IconButton
                 icon={Menu}
                 label="Toggle navigation"
                 onClick={() => setRail(!rail)}
               />
-            </span>
+            </span>}
             <Layers3 size={16} />
             <span>Workspace</span>
             <ChevronRight size={13} />
             <strong>{title}</strong>
           </div>
-          <div className="top-actions">
+          {!detached && <div className="top-actions">
+            {windowViews.has(view) && view !== 'channels' && <Btn icon={ExternalLink}
+              onClick={() => popOut(view)}>Open in new window</Btn>}
             {desktop && (
               <Btn icon={Download} onClick={() => nativeAction('update')}>
                 Update
@@ -530,7 +576,7 @@ function App() {
               label="Notification inbox"
               onClick={() => go('inbox')}
             />
-          </div>
+          </div>}
         </div>
         <Suspense fallback={<p className="page">Loading…</p>}>
           {view === 'directory' ? (
@@ -565,12 +611,11 @@ function App() {
             <Admin {...shared} navigate={go} />
           ) : view === 'inbox' ? (
             <InboxPage {...shared} open={openNotice} />
-          ) : view === 'whiteboard' ? (
-            <Canvas {...shared} />
           ) : view === 'figma' ? (
             <FigmaResource {...shared} />
           ) : view === 'notes' ? (
-            <Notes {...shared} />
+            <Notes {...shared} initialNote={detached && windowParams.get('note')}
+              initialScope={detached && windowParams.get('scope')} popOut={detached ? null : popOut} />
           ) : view === 'vault' ? (
             <Vault {...shared} />
           ) : ['docs', 'drive', 'links'].includes(view) ? (
@@ -578,37 +623,48 @@ function App() {
           ) : null}
         </Suspense>
         <Suspense fallback={null}>
-          <Meetings
+          {(!detached || ['meetings', 'channels'].includes(detached)) && <Meetings
             key={api.uid}
             {...shared}
             prefs={prefs}
             hub={view === 'meetings'}
             visible={view === 'calendar' || view === 'meetings'}
             request={meetingRequest}
-          />
+            reminders={!detached}
+            callRoom={detached === 'meetings' ? windowParams.get('room') || '' : ''}
+          />}
         </Suspense>
         <Suspense fallback={null}>
-          <Eod
+          {!detached && <Eod
             key={api.uid}
             {...shared}
             visible={view === 'eod'}
             requested={eodDate}
-          />
+          />}
         </Suspense>
         <Suspense fallback={null}>
-          <Channels
+          {(!detached || detached === 'channels') && <Channels
             key={api.uid}
             {...shared}
             showing={view === 'channels'}
             meeting={(ch, mode) => requestMeeting({ ch, mode })}
             selected={channelId}
+            initialPeer={detached ? windowParams.get('peer') : ''}
+            popOut={detached ? null : popOut}
             onSelect={(id) => {
               setChannelId(id);
               go('channels');
             }}
-          />
+          />}
         </Suspense>
       </main>
+      {profile && <Modal title="Member profile" onClose={() => setProfileId('')}>
+        <div className="form-body member-profile">
+          <Avatar person={profile} />
+          <div><h3>{profile.name}</h3><p>{profile.email}</p>
+            <span className="chip neutral">{profile.role}</span></div>
+        </div>
+      </Modal>}
       {showAuth && (
         <SignIn onClose={() => authDialog(false)} connect={connect} />
       )}

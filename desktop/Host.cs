@@ -16,6 +16,7 @@ internal class WorkspaceWindow : Form {
     const string Origin = "https://workspace.monexus.local";
     const string AppId = "Monexus.Workspace";
     readonly WebView2 view = new WebView2();
+    readonly Dictionary<string,Form> callWindows = new Dictionary<string,Form>();
     readonly NotifyIcon tray = new NotifyIcon();
     readonly EventWaitHandle showEvent;
     RegisteredWaitHandle showWait;
@@ -99,24 +100,102 @@ internal class WorkspaceWindow : Form {
         FormClosed+=(s,e)=>{if(showWait!=null)showWait.Unregister(null);tray.Visible=false;tray.Dispose();};
     }
     void RestoreWorkspace(){Show();if(WindowState==FormWindowState.Minimized)WindowState=FormWindowState.Normal;Activate();}
+    static void ConfigureView(CoreWebView2 core) {
+        core.Settings.AreDevToolsEnabled=false;
+        core.Settings.AreHostObjectsAllowed=false;
+        core.Settings.IsStatusBarEnabled=false;
+        core.SetVirtualHostNameToFolderMapping("workspace.monexus.local",Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"web"),CoreWebView2HostResourceAccessKind.DenyCors);
+        core.NavigationStarting+=(s,e)=>{if(!Local(e.Uri))e.Cancel=true;};
+        core.NewWindowRequested+=(s,e)=>{e.Handled=true;if(e.IsUserInitiated && !Local(e.Uri))OpenWeb(e.Uri);};
+    }
+    async void OpenWorkspaceWindow(CoreWebView2Environment env,string address,string title) {
+        if(!Local(address) || new Uri(address).AbsolutePath!="/index.html")return;
+        bool isCall=new Uri(address).Query.StartsWith("?window=meetings&room=",StringComparison.Ordinal);
+        Form existing;
+        if(isCall && callWindows.TryGetValue(address,out existing) && !existing.IsDisposed) {
+            if(existing.WindowState==FormWindowState.Minimized)existing.WindowState=FormWindowState.Normal;
+            existing.Activate();return;
+        }
+        var child=new Form { Text=title+" · Monexus",Icon=Icon,Size=new Size(960,720),
+            MinimumSize=new Size(420,360),StartPosition=FormStartPosition.CenterParent };
+        if(isCall)callWindows[address]=child;
+        child.FormClosed+=(s,e)=>{if(isCall)callWindows.Remove(address);};
+        var content=new WebView2 { Dock=DockStyle.Fill };
+        var toolbar=new ToolStrip { GripStyle=ToolStripGripStyle.Hidden, Dock=DockStyle.Top };
+        var pin=new ToolStripButton("Pin window") { CheckOnClick=true, ToolTipText="Keep this window on top" };
+        pin.CheckedChanged+=(s,e)=>{child.TopMost=pin.Checked;pin.Text=pin.Checked?"Unpin window":"Pin window";};
+        var fullscreen=new ToolStripButton("Full screen") { CheckOnClick=true, ToolTipText="Toggle full screen (F11)" };
+        var normal=FormWindowState.Normal;
+        fullscreen.CheckedChanged+=(s,e)=>{
+            if(fullscreen.Checked) {
+                normal=child.WindowState;
+                child.FormBorderStyle=FormBorderStyle.None;
+                child.WindowState=FormWindowState.Maximized;
+            } else {
+                child.FormBorderStyle=FormBorderStyle.Sizable;
+                child.WindowState=normal;
+            }
+            fullscreen.Text=fullscreen.Checked?"Exit full screen":"Full screen";
+        };
+        toolbar.Items.Add(pin);toolbar.Items.Add(fullscreen);
+        child.Controls.Add(content);
+        child.Controls.Add(toolbar);
+        bool closeRequested=false,allowClose=false;
+        var closeTimer=new System.Windows.Forms.Timer { Interval=2500 };
+        closeTimer.Tick+=(s,e)=>{closeTimer.Stop();allowClose=true;child.Close();};
+        child.FormClosed+=(s,e)=>closeTimer.Dispose();
+        child.FormClosing+=(s,e)=>{
+            if(!isCall || allowClose || e.CloseReason!=CloseReason.UserClosing || content.CoreWebView2==null)return;
+            e.Cancel=true;
+            if(!closeRequested) {
+                closeRequested=true;closeTimer.Start();
+                content.CoreWebView2.PostWebMessageAsJson("{\"kind\":\"close_call\"}");
+            }
+        };
+        child.Show();
+        try {
+            await content.EnsureCoreWebView2Async(env);
+            if(child.IsDisposed)return;
+            var core=content.CoreWebView2;
+            ConfigureView(core);
+            content.KeyDown+=(s,e)=>{
+                if(e.KeyCode==Keys.F11 || (e.KeyCode==Keys.Escape && fullscreen.Checked)) {
+                    fullscreen.Checked=!fullscreen.Checked;e.Handled=true;
+                }
+            };
+            core.WebMessageReceived+=(s,e)=>{
+                if(!Local(e.Source))return;
+                try {
+                    var message=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(e.WebMessageAsJson);
+                    switch(Convert.ToString(message["command"])) {
+                        case "open_link":OpenWeb(Convert.ToString(message["url"]));break;
+                        case "open_window":OpenWorkspaceWindow(env,Convert.ToString(message["url"]),Convert.ToString(message["title"]));break;
+                        case "close_window":allowClose=true;child.Close();break;
+                    }
+                } catch(Exception) { if(!child.IsDisposed)core.PostWebMessageAsString("Windows could not complete the window action."); }
+            };
+            core.Navigate(address);
+        } catch(Exception ex) {
+            if(!child.IsDisposed){MessageBox.Show(child,ex.Message,"Unable to open workspace window");child.Close();}
+        }
+    }
     async void StartWebView(object sender,EventArgs args) {
         showWait=ThreadPool.RegisterWaitForSingleObject(showEvent,(o,t)=>{if(!IsDisposed)BeginInvoke(new Action(RestoreWorkspace));},null,Timeout.Infinite,false);
         try {
-            string profile=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Monexus","WebView");
+            if(String.IsNullOrEmpty(Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER")))InstallPaths.EnsureRoot();
+            string profile=InstallPaths.Profile;
             var env=await CoreWebView2Environment.CreateAsync(null,profile,null);
             await view.EnsureCoreWebView2Async(env);var core=view.CoreWebView2;
-            core.Settings.AreDevToolsEnabled=false;core.Settings.AreHostObjectsAllowed=false;core.Settings.IsStatusBarEnabled=false;
-            core.SetVirtualHostNameToFolderMapping("workspace.monexus.local",Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"web"),CoreWebView2HostResourceAccessKind.DenyCors);
+            ConfigureView(core);
             var meetingAlarm = new System.Windows.Forms.Timer();
             meetingAlarm.Tick += (s,e) => {meetingAlarm.Stop();core.PostWebMessageAsJson("{\"kind\":\"meeting_clock\"}");};
             FormClosed += (s,e) => meetingAlarm.Dispose();
-            core.NavigationStarting+=(s,e)=>{if(!Local(e.Uri))e.Cancel=true;};
-            core.NewWindowRequested+=(s,e)=>{e.Handled=true;if(e.IsUserInitiated)OpenWeb(e.Uri);};
             core.WebMessageReceived+=(s,e)=>{
                 if(!Local(e.Source))return;
                 try {
                     var msg=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(e.WebMessageAsJson);
                     string command=Convert.ToString(msg["command"]);
+                    if(command=="open_window")OpenWorkspaceWindow(env,Convert.ToString(msg["url"]),Convert.ToString(msg["title"]));
                     if(command=="unread_badge")SetBadge(Convert.ToInt32(msg["count"]));
                     if(command=="meeting_alarm"){
                         meetingAlarm.Stop();
@@ -124,7 +203,7 @@ internal class WorkspaceWindow : Form {
                         if(delay>0){meetingAlarm.Interval=(int)Math.Min(Int32.MaxValue,Math.Ceiling(delay));meetingAlarm.Start();}
                     }
                     if(command=="update"){
-                        string setup=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Programs","Monexus Workspace","MonexusSetup.exe");
+                        string setup=Path.Combine(InstallPaths.Root,"MonexusSetup.exe");
                         if(File.Exists(setup))Process.Start(setup,"/update");
                         else MessageBox.Show(this,"Run the Monexus Workspace installer to enable updates.");
                     }

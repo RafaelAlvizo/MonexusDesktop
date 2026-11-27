@@ -235,6 +235,8 @@ export default function Resources({ api, me, members, area, contributions }) {
     [moving, setMoving] = useState(null),
     [editing, edit] = useState(undefined),
     [remove, confirm] = useState(null),
+    [dragging, setDragging] = useState(false),
+    [dropStatus, setDropStatus] = useState(''),
     job = useJob();
   const folder = folders.at(-1)?.id || '',
     links = area === 'links',
@@ -276,11 +278,65 @@ export default function Resources({ api, me, members, area, contributions }) {
     setMoving(null);
     page.refresh();
   };
+  function acceptsDrop(transfer) {
+    return area === 'docs' && Array.from(transfer.types).some(type =>
+      ['Files', 'text/uri-list', 'text/plain'].includes(type));
+  }
+  function drop(e) {
+    if (!acceptsDrop(e.dataTransfer)) return;
+    e.preventDefault();
+    setDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    const raw = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+    const links = files.length && !e.dataTransfer.getData('text/uri-list') ? [] :
+      raw.split(/\r?\n/).map(x => x.trim()).filter(x => x && !x.startsWith('#'));
+    job.run(async () => {
+      if (files.length && !canUpload) throw Error('You need permission to upload document files.');
+      if (links.length && !canLink) throw Error('You need permission to add document links.');
+      const urls = [...new Set(links)].map(value => {
+        if (!/^https?:\/\//i.test(value)) throw Error('Drop an HTTP or HTTPS link.');
+        return new URL(value);
+      });
+      const base = { area, folder, acl: { everyone: true } };
+      try {
+        for (const file of files) {
+          if (!file.size) throw Error('Cannot upload an empty file: ' + file.name);
+          setDropStatus('Uploading ' + file.name);
+          const key = await api.command('library.save', {
+            ...base, id: newId('r'), kind: 'file', name: file.name.slice(0, 160),
+          });
+          await api.upload({ kind: 'library', container: 'library', item: key }, file,
+            pct => setDropStatus('Uploading ' + file.name + ' · ' + pct + '%'));
+        }
+        for (const url of urls) {
+          setDropStatus('Saving link…');
+          await api.command('library.save', {
+            ...base, id: newId('r'), kind: 'link', name: (url.host + url.pathname).slice(0, 160), url: url.href,
+          });
+        }
+      } finally {
+        page.refresh();
+        setDropStatus('');
+      }
+    });
+  }
   if (!links)
     return (
-      <div className="page files-page">
+      <div className={'page files-page' + (dragging ? ' drop-target' : '')}
+        onDragOver={e => {
+          if (acceptsDrop(e.dataTransfer)) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = job.busy ? 'none' : 'copy';
+            setDragging(true);
+          }
+        }}
+        onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false); }}
+        onDrop={drop}>
         <div className="page-head">
           <h1>{names[area]}</h1>
+          {area === 'docs' && (canUpload || canLink) && <small role="status">
+            {dropStatus || ('Drop ' + (canUpload && canLink ? 'files or links' : canUpload ? 'files' : 'links') + ' here')}
+          </small>}
         </div>
         <FileBrowser
           name={names[area]}
@@ -301,6 +357,8 @@ export default function Resources({ api, me, members, area, contributions }) {
           }
           edit={canEdit ? edit : null}
           move={canEdit ? setMoving : null}
+          remove={area === 'docs' ? n => { job.setError(''); confirm(n); } : null}
+          canRemove={n => canEdit || (n.by === me.id && (n.kind === 'file' ? canUpload : n.kind === 'link' && canLink))}
           open={(n) =>
             job.run(async () => {
               if (n.kind === 'folder') {
@@ -335,7 +393,21 @@ export default function Resources({ api, me, members, area, contributions }) {
             </>
           }
         />
-        <ErrorText error={job.error} />
+        {!remove && <ErrorText error={job.error} />}
+        {remove && <Modal title={'Delete ' + remove.name + '?'} onClose={() => !job.busy && confirm(null)}>
+          <div className="form-body">
+            <p>This removes the {remove.kind} from Documentation for everyone who can access it.</p>
+            <ErrorText error={job.error} />
+          </div>
+          <footer>
+            <Btn disabled={job.busy} onClick={() => confirm(null)}>Cancel</Btn>
+            <Btn kind="danger" disabled={job.busy} onClick={() => job.run(async () => {
+              await api.command('library.remove', { id: remove.id, rev: remove.rev ?? 0 });
+              confirm(null);
+              page.refresh();
+            })}>Delete {remove.kind}</Btn>
+          </footer>
+        </Modal>}
         {editing !== undefined && (
           <Editor
             {...{ api, area, folder, scope, members, kind }}

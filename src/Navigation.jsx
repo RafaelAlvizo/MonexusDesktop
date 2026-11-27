@@ -45,7 +45,7 @@ export function useNavigationOrder(api, tell) {
       ids.includes(getId(x)) ? ids.indexOf(getId(x)) : Infinity;
     return [...items].sort((a, b) => rank(a) - rank(b));
   }
-  function props(group, id, ids) {
+  function props(group, id, ids, extra = []) {
     return {
       draggable: true,
       onContextMenu: (e) => {
@@ -61,6 +61,7 @@ export function useNavigationOrder(api, tell) {
             label: 'Open ' + button.textContent.trim(),
             run: () => button.click(),
           },
+          ...extra,
           index > 0 && { label: 'Move up', run: () => move(index - 1) },
           index < ids.length - 1 && {
             label: 'Move down',

@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+import { defaultPrefs } from '../functions/core/model.mjs';
 import {
   getAuth,
   createUserWithEmailAndPassword,
@@ -6,6 +7,7 @@ import {
   sendEmailVerification,
   sendPasswordResetEmail,
   signOut,
+  onAuthStateChanged,
   connectAuthEmulator,
 } from 'firebase/auth';
 const local = import.meta.env.VITE_USE_EMULATORS === '1',
@@ -100,7 +102,7 @@ async function getWorkspace(user) {
   const endpoint = local
     ? 'http://127.0.0.1:5001/' + projectId + '/us-central1/'
     : 'https://us-central1-' + projectId + '.cloudfunctions.net/';
-  async function response(name, key) {
+  async function response(name, key, signal) {
     const part = async (offset) => {
       const res = await fetch(
         endpoint +
@@ -112,6 +114,7 @@ async function getWorkspace(user) {
         {
           headers: { Authorization: 'Bearer ' + (await user.getIdToken()) },
           cache: 'no-store',
+          signal,
         },
       );
       if (!res.ok) throw Error((await res.text()) || 'Access denied.');
@@ -149,6 +152,26 @@ async function getWorkspace(user) {
   return {
     uid,
     command,
+    async meetingExit(id, session) {
+      const token = await user.getIdToken();
+      return () => fetch(endpoint + 'workspace', {
+        method: 'POST', keepalive: true,
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({data:{action:'meeting.leave',p:{id,session}}}),
+      }).catch(() => {});
+    },
+    watchSession(ended) {
+      return onAuthStateChanged(auth, current => { if (current?.uid !== uid) ended(); });
+    },
+    watchIdeas(board, count, update, fail) {
+      const ideas = f.collection(db, 'boards', board, 'ideas');
+      return f.onSnapshot(f.query(ideas, f.orderBy('at', 'desc'), f.limit(count + 1)),
+        snap => update(snap.docs.slice(0, count).map(doc => doc.data()), snap.size > count), fail);
+    },
+    watchSettings(update, fail) {
+      return f.onSnapshot(f.doc(db, 'members', uid, 'private', 'settings'),
+        snap => update({ ...defaultPrefs, ...snap.data() }), fail);
+    },
     mcpUrl: endpoint + 'assistantMcp',
     async logout() {
       let timer;
@@ -549,7 +572,7 @@ async function getWorkspace(user) {
       await command('file.finish', { id: key });
       return key;
     },
-    fileBlob: async (key) => (await response('fileDownload', key)).blob(),
+    fileBlob: async (key, signal) => (await response('fileDownload', key, signal)).blob(),
     fileResponse: (key) => response('fileDownload', key),
     vaultResponse: (key) => response('vaultAccess', key),
     vaultRead: async (key) => (await response('vaultAccess', key)).blob(),

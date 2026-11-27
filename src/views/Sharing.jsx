@@ -335,7 +335,7 @@ export function Roles({ api, members }) {
   );
 }
 
-export function FolderPicker({ api, action, area, current, exclude, change }) {
+export function FolderPicker({ api, action, area, current, exclude, change, initiallyOpen = false, busy = false }) {
   const [path, setPath] = useState([]),
     [open, show] = useState(initiallyOpen);
   const folder = path.at(-1)?.id || '';
@@ -385,7 +385,7 @@ export function FolderPicker({ api, action, area, current, exclude, change }) {
           ))}
           <ErrorText error={folders.error} />
           <Btn
-            disabled={folder === current}
+            disabled={busy || folders.loading || !!folders.error || folder === current}
             onClick={() => {
               change(folder, path.at(-1)?.name || 'Top level');
               if (!initiallyOpen) show(false);
@@ -416,6 +416,7 @@ export function MoveItem({ api, item, vault = false, close, saved }) {
           current={item.folder}
           exclude={item.id}
           initiallyOpen
+          busy={job.busy}
           action={vault ? 'vault.list' : 'library.list'}
           change={(folder) =>
             job.run(async () => {

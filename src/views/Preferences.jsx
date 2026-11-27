@@ -138,6 +138,9 @@ export default function Preferences({
             </Label>
             {photo && <Btn onClick={() => setPhoto('')}>Remove picture</Btn>}
           </div>
+          <Check checked={!!p.clickSounds} onChange={e => patch({ clickSounds: e.target.checked })}>
+            Play interface click sounds
+          </Check>
           <div className="form-grid">
             <Label name="Display name">
               <input value={name} onChange={(e) => setName(e.target.value)} />

@@ -15,6 +15,7 @@ import {
   UsersRound,
   Signal,
   GripVertical,
+  Trash2,
   ArrowRight,
 } from 'lucide-react';
 import {
@@ -24,6 +25,7 @@ import {
   ticketKey,
   fieldText,
   empty,
+  newId,
 } from '../../functions/core/model.mjs';
 import {
   Avatar,
@@ -32,6 +34,7 @@ import {
   Empty,
   ErrorText,
   humanError,
+  useJob,
 } from '../ui.jsx';
 const Ticket = lazy(() => import('./Ticket.jsx')),
   Config = lazy(() => import('./BoardConfig.jsx'));
@@ -114,6 +117,44 @@ function TicketCard({ t, board, members, open, canMove }) {
     </button>
   );
 }
+function PossibleTickets({ api, board, search }) {
+  const job = useJob();
+  const [draftId, setDraftId] = useState(() => newId('idea'));
+  const [ideas, setIdeas] = useState([]);
+  const [limit, setLimit] = useState(80);
+  const [more, setMore] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => api.watchIdeas(board, limit, (rows, hasMore) => {
+    setIdeas(rows);
+    setMore(hasMore);
+    setError('');
+  }, e => { setIdeas([]); setError(humanError(e)); }), [api, board, limit]);
+  const [title, setTitle] = useState('');
+  return <section className="lane idea-lane">
+    <header><i className="dot gold" /><h2>Possible tickets</h2></header>
+    <form className="row" onSubmit={e => {
+      e.preventDefault();
+      if (title.trim()) job.run(async () => {
+        await api.command('ideas.add', { board, id: draftId, title: title.trim() });
+        setDraftId(newId('idea'));
+        setTitle('');
+      });
+    }}>
+      <input aria-label="Possible ticket title" placeholder="Add a title…" maxLength={200}
+        value={title} disabled={job.busy} onChange={e => setTitle(e.target.value)} />
+      <button className="btn" disabled={job.busy || !title.trim()}>Add</button>
+    </form>
+    <div className="lane-cards">
+      {ideas.filter(idea => idea.title.toLowerCase().includes(search.toLowerCase())).map(idea =>
+        <div className="idea-row" key={idea.id}><span>{idea.title}</span>
+          <IconButton icon={Trash2} label={'Remove ' + idea.title} disabled={job.busy}
+            onClick={() => job.run(() => api.command('ideas.remove', { board, id: idea.id }))} />
+        </div>)}
+      {more && <Btn onClick={() => setLimit(n => n + 80)}>Load more titles</Btn>}
+      <ErrorText error={error || job.error} />
+    </div>
+  </section>;
+}
 export default function Board({
   api,
   board,
@@ -125,6 +166,7 @@ export default function Board({
   jump,
   clearJump,
   tell,
+  onProfile,
 }) {
   const [backlog, showBacklog] = useState(false);
   const [viewers, setViewers] = useState([]);
@@ -349,10 +391,10 @@ export default function Board({
                 const m = members.find((p) => p.id === uid);
                 return (
                   m && (
-                    <span key={uid}>
+                    <button className="person-link row" key={uid} onClick={() => onProfile(m)}>
                       <Avatar person={m} small />
                       {m.name}
-                    </span>
+                    </button>
                   )
                 );
               })}
@@ -367,7 +409,7 @@ export default function Board({
             </span>
           </div>
           <div className="board-toolbar">
-            <div className="view-switch">
+            {!(backlog && isAdmin(me)) && <div className="view-switch">
               <button
                 className={mode === 'board' ? 'on' : ''}
                 onClick={() => setMode('board')}
@@ -382,7 +424,7 @@ export default function Board({
                 <List size={16} />
                 List
               </button>
-            </div>
+            </div>}
             <div className="tools">
               <label className="search">
                 <Search size={15} />
@@ -492,8 +534,8 @@ export default function Board({
             </div>
           )}
           <ErrorText error={err} />
-          {mode === 'board' ? (
-            <div className="kanban">
+          {mode === 'board' || (backlog && isAdmin(me)) ? (
+            <div className={'kanban' + (backlog && isAdmin(me) ? ' backlog-lanes' : '')}>
               {stages.map((col) => {
                 const items = visible.filter((t) => t.column === col.id);
                 return (
@@ -544,6 +586,7 @@ export default function Board({
                   </section>
                 );
               })}
+              {backlog && isAdmin(me) && <PossibleTickets api={api} board={board.id} search={search} />}
             </div>
           ) : (
             <div className="list-wrap">

@@ -12,9 +12,15 @@ export default function Inbox({ api, open }) {
           <div className="eyebrow">Workspace</div>
           <h1>Inbox</h1>
         </div>
+        <div className="row wrap">
+        <Btn disabled={job.busy} onClick={() => job.run(async () => {
+          await api.command('inbox.readAll');
+          page.refresh();
+        })}>Mark all as read</Btn>
         <Btn icon={RotateCw} onClick={page.refresh}>
           Refresh
         </Btn>
+        </div>
       </div>
       <div className="panel">
         {page.items.map((n) => (

@@ -169,7 +169,7 @@ function Limits({ api, tell, initial }) {
     </>
   );
 }
-export default function Admin({ api, me, members, tell, navigate }) {
+export default function Admin({ api, me, members, tell, navigate, onProfile }) {
   const [tab, set] = useState('Members'),
     [edit, choose] = useState(undefined),
     loaded = useLoad(
@@ -210,11 +210,12 @@ export default function Admin({ api, me, members, tell, navigate }) {
         {tab === 'Members' ? (
           members.map((m) => (
             <div className="resource-row" key={m.id}>
-              <Avatar person={m} />
-              <div className="grow">
+              <button className="person-link" aria-label={'View profile of ' + m.name} onClick={() => onProfile(m)}>
+                <Avatar person={m} /></button>
+              <button className="person-link grow" onClick={() => onProfile(m)}>
                 <strong>{m.name}</strong>
                 <small>{m.email}</small>
-              </div>
+              </button>
               <span className="chip neutral">
                 {m.active ? m.role : 'Disabled'}
               </span>

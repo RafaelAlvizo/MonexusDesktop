@@ -20,7 +20,7 @@ import {
   Tabs,
 } from '../ui.jsx';
 import { newId } from '../../functions/core/model.mjs';
-import { desktop, nativeAction } from '../native.mjs';
+import { desktop, nativeAction, reserveCallWindow } from '../native.mjs';
 import Call from './Call.jsx';
 
 const minute = 60000,
@@ -53,7 +53,7 @@ function Plan({ api, me, members, context, close, created }) {
         ? channel.kind === 'direct'
           ? 'Voice call with ' + [me.name, channel.name].join(' & ')
           : channel.name + ' meeting'
-        : '',
+        : instant ? me.name + '’s meeting' : '',
     ),
     [start, setStart] = useState(localInput(first)),
     [duration, length] = useState(60),
@@ -99,6 +99,8 @@ function Plan({ api, me, members, context, close, created }) {
         onSubmit={(e) => {
           e.preventDefault();
           job.run(async () => {
+            const popup = instant && reserveCallWindow(key.current, title);
+            try {
             const room = await api.command('meeting.create', {
               id: key.current,
               title,
@@ -111,7 +113,12 @@ function Plan({ api, me, members, context, close, created }) {
               channels,
               auto,
             });
+            if (popup) popup.open();
             await created(room);
+            } catch (e) {
+              if (popup) popup.cancel();
+              throw e;
+            }
           });
         }}
       >
@@ -162,7 +169,7 @@ function Plan({ api, me, members, context, close, created }) {
             </Label>
           </div>
           <section className="guest-section">
-            <h3>Guests</h3>
+            <h3>Guests <small>(optional)</small></h3>
             {channel && (
               <p>
                 {channel.name} ·{' '}
@@ -240,13 +247,7 @@ function Plan({ api, me, members, context, close, created }) {
           <Btn onClick={close}>Cancel</Btn>
           <button
             className="btn primary"
-            disabled={
-              job.busy ||
-              (!channel &&
-                !invited.length &&
-                !roleIds.length &&
-                !channels.length)
-            }
+            disabled={job.busy || !title.trim()}
           >
             {instant ? 'Start call' : 'Schedule meeting'}
           </button>
@@ -323,6 +324,8 @@ export default function Meetings({
   visible,
   hub,
   request,
+  reminders = true,
+  callRoom = '',
 }) {
   const [rooms, setRooms] = useState([]),
     [now, setNow] = useState(Date.now()),
@@ -334,6 +337,8 @@ export default function Meetings({
   const offset = useRef(0),
     job = useJob(),
     joining = useRef(false);
+  const [roomListReady, setRoomListReady] = useState(false);
+  const attempted = useRef('');
   useEffect(() => {
     if (request) setPlan(request);
   }, [request]);
@@ -343,6 +348,7 @@ export default function Meetings({
         (data) => {
           setNow(Date.now() + offset.current);
           setRooms(data.sort((a, b) => a.start - b.start));
+          setRoomListReady(true);
           fail('');
         },
         (e) => fail(e.message),
@@ -382,15 +388,16 @@ export default function Meetings({
       Math.max(1, nextBoundary - Date.now() - offset.current + 10),
     );
     const wake = setTimeout(() => setNow(Date.now() + offset.current), delay);
-    if (desktop) nativeAction('meeting_alarm', { delay });
+    if (desktop && reminders) nativeAction('meeting_alarm', { delay });
     return () => {
       clearTimeout(wake);
-      if (desktop) nativeAction('meeting_alarm', { delay: 0 });
+      if (desktop && reminders) nativeAction('meeting_alarm', { delay: 0 });
     };
-  }, [nextBoundary]);
+  }, [nextBoundary, reminders]);
   const seen = (id, phase) =>
     'monexus.meeting.' + me.id + '.' + id + '.' + phase;
   useEffect(() => {
+    if (!reminders) return;
     for (const m of rooms) {
       if (m.ended || now >= m.end || (m.instant && m.host === me.id)) continue;
       const remaining = m.start - now;
@@ -422,11 +429,18 @@ export default function Meetings({
         break;
       } else if (!desktop) tell(title + ' · ' + m.title);
     }
-  }, [rooms, now, call, invite, me.id, prefs]);
+  }, [rooms, now, call, invite, me.id, prefs, reminders]);
+  function openMeeting(m) {
+    reserveCallWindow(m.id, m.title).open();
+    localStorage.setItem(seen(m.id, 'open'), '1');
+    setInvite(null);
+  }
   async function join(m) {
     if (joining.current || call) return;
     joining.current = true;
-    const session = crypto.randomUUID();
+    const sessionKey = 'monexus.call.' + me.id + '.' + m.id;
+    const session = sessionStorage.getItem(sessionKey) || crypto.randomUUID();
+    sessionStorage.setItem(sessionKey, session);
     try {
       const result = await api.command('meeting.join', { id: m.id, session });
       localStorage.setItem(seen(m.id, 'open'), '1');
@@ -435,6 +449,16 @@ export default function Meetings({
     } finally {
       joining.current = false;
     }
+  }
+  const target = callRoom && rooms.find(m => m.id === callRoom);
+  useEffect(() => {
+    if (!target || attempted.current === target.id) return;
+    attempted.current = target.id;
+    join(target).catch(e => fail(e.message));
+  }, [target]);
+  function closeCall() {
+    if (desktop) nativeAction('close_window');
+    else window.close();
   }
   const room = call && (rooms.find((x) => x.id === call.id) || call.room);
   const incoming = rooms.find(
@@ -454,14 +478,20 @@ export default function Meetings({
       icon={Phone}
       kind="primary"
       disabled={job.busy || !!call}
-      onClick={() => job.run(() => join(m))}
+      onClick={() => job.run(() => openMeeting(m))}
     >
       Join meeting
     </Btn>
   );
   return (
     <>
-      {visible && (
+      {callRoom && !call && <section className="page">
+        <h1>{target?.title || 'Meeting'}</h1>
+        <p role="status">{error || (roomListReady && !target ? 'This meeting is unavailable for your account.' : 'Connecting to the meeting…')}</p>
+        {error && target && <Btn disabled={job.busy} onClick={() => job.run(() => join(target))}>Retry</Btn>}
+        <Btn onClick={closeCall}>Close window</Btn>
+      </section>}
+      {visible && !callRoom && (
         <div className="page calendar-view">
           <div className="page-head">
             <h1>{hub ? 'Meetings' : 'Calendar'}</h1>
@@ -553,7 +583,7 @@ export default function Meetings({
           close={() => setPlan(null)}
           created={async (m) => {
             select(dayKey(new Date(m.start)));
-            if (m.instant) await join(m);
+            if (m.instant) localStorage.setItem(seen(m.id, 'open'), '1');
             else tell('Meeting scheduled.');
             setPlan(null);
           }}
@@ -588,7 +618,8 @@ export default function Meetings({
           entry={call}
           exit={(msg) => {
             setCall(null);
-            if (msg) tell(msg);
+            if (msg) fail(msg);
+            else closeCall();
           }}
         />
       )}

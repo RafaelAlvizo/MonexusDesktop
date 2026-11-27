@@ -29,7 +29,7 @@ export default function Figma({ api, me, contributions }) {
     [form, setForm] = useState(null),
     [preview, setPreview] = useState(null);
   const items = [...(list.data || []), ...(preview ? [preview] : [])],
-    item = items.find((x) => x.id === selected) || items[0];
+    item = items.find((x) => x.id === selected);
   function openOriginal() {
     if (item.source) return openLink(item.source);
     const url = new URL(item.url);
@@ -80,6 +80,7 @@ export default function Figma({ api, me, contributions }) {
       {item ? (
         <>
           <div className="figma-tools">
+            <Btn onClick={() => select('')}>All projects</Btn>
             <select
               aria-label="Figma file"
               value={item.id}
@@ -108,6 +109,15 @@ export default function Figma({ api, me, contributions }) {
             referrerPolicy="strict-origin-when-cross-origin"
           />
         </>
+      ) : items.length ? (
+        <section className="panel stack" aria-label="Saved Figma projects">
+          <h2>Choose a project</h2>
+          {items.map(project => (
+            <button className="resource-row" key={project.id} onClick={() => select(project.id)}>
+              <FigmaIcon size={18} /> {project.name}
+            </button>
+          ))}
+        </section>
       ) : (
         <div className="resource-empty">
           <FigmaIcon size={32} />

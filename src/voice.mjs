@@ -79,6 +79,15 @@ export function voiceRoom({
         if (p.generation === msg.generation) return;
         p.generation = msg.generation;
         await p.pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+        // Answer on the offered media lines. Creating additional transceivers here
+        // would attach outgoing tracks to lines the offer never negotiated.
+        for (const transceiver of p.pc.getTransceivers()) {
+          const kind = transceiver.receiver.track.kind;
+          if (kind !== 'audio' && kind !== 'video') continue;
+          p[kind] = transceiver;
+          transceiver.direction = 'sendrecv';
+          await transceiver.sender.replaceTrack(kind === 'audio' ? mic : screen);
+        }
         await p.pc.setLocalDescription(await p.pc.createAnswer());
         await send(p);
       } else if (
@@ -97,8 +106,9 @@ export function voiceRoom({
   function add(row) {
     const pc = new RTCPeerConnection({ iceServers: ice }),
       remote = new MediaStream();
-    const audio = pc.addTransceiver('audio', { direction: 'sendrecv' }),
-      video = pc.addTransceiver('video', { direction: 'sendrecv' });
+    const initiator = session < row.session;
+    const audio = initiator ? pc.addTransceiver('audio', { direction: 'sendrecv' }) : null,
+      video = initiator ? pc.addTransceiver('video', { direction: 'sendrecv' }) : null;
     const p = {
       pc,
       session: row.session,
@@ -107,7 +117,7 @@ export function voiceRoom({
       audio,
       video,
       queue: Promise.resolve(),
-      initiator: session < row.session,
+      initiator,
     };
     peers.set(row.uid, p);
     pc.ontrack = (e) => {
@@ -122,8 +132,8 @@ export function voiceRoom({
       }
     };
     queue(p, async () => {
-      await audio.sender.replaceTrack(mic);
-      await video.sender.replaceTrack(screen);
+      await audio?.sender.replaceTrack(mic);
+      await video?.sender.replaceTrack(screen);
     });
     if (p.initiator) offer(p);
     if (pending.has(row.session)) {
@@ -144,13 +154,13 @@ export function voiceRoom({
     async microphone(track) {
       mic = track;
       await Promise.all(
-        [...peers.values()].map((p) => p.audio.sender.replaceTrack(track)),
+        [...peers.values()].map((p) => p.audio?.sender.replaceTrack(track)),
       );
     },
     async display(track) {
       screen = track;
       await Promise.all(
-        [...peers.values()].map((p) => p.video.sender.replaceTrack(track)),
+        [...peers.values()].map((p) => p.video?.sender.replaceTrack(track)),
       );
     },
     close() {

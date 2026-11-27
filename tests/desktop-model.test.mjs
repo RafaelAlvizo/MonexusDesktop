@@ -1,10 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { attachmentType } from '../src/attachmentTypes.mjs';
 import {
   boardTemplate,
   channelAllows,
   figmaEmbed,cleanAcl,mayContribute,
 } from '../functions/core/model.mjs';
+
+test('older uploads with generic MIME types still select the correct preview', () => {
+  const cases = [
+    ['Sidney Harbour Waterfront Friends.PNG', 'image'],
+    ['recording.webm', 'video'],
+    ['voice.wav', 'audio'],
+    ['contract.PDF', 'pdf'],
+    ['plan.docx', 'office'],
+    ['notes.txt', 'text'],
+    ['archive.zip', 'other'],
+  ];
+  for (const [name, kind] of cases)
+    assert.equal(attachmentType({ name, mime: 'application/octet-stream' }).kind, kind);
+  assert.equal(attachmentType({ name: 'upload', mime: 'image/jpeg' }).kind, 'image');
+});
 
 test('new boards include ticket labels and workflow columns', () => {
   const board = boardTemplate();

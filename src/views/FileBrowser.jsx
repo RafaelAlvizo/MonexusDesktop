@@ -11,6 +11,7 @@ import {
   LockKeyhole,
   Search,
   ShieldCheck,
+  Trash2,
 } from 'lucide-react';
 import { IconButton, More } from '../ui.jsx';
 import { accessSummary } from './Sharing.jsx';
@@ -37,6 +38,8 @@ export default function FileBrowser({
   canManage = () => false,
   edit,
   move,
+  remove,
+  canRemove,
   search = '',
   onSearch,
   tools,
@@ -264,6 +267,7 @@ export default function FileBrowser({
           {move &&
             (menu.item.area || menu.item.acl) &&
             action('Move to folder', Folder, move)}
+          {remove && canRemove(menu.item) && action('Delete', Trash2, remove)}
         </div>
       )}
     </section>

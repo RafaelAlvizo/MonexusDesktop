@@ -75,7 +75,7 @@ export function PollResult({ poll, me, enabled, vote }) {
     </div>
   );
 }
-export function Roster({ members, presence, close }) {
+export function Roster({ members, presence, close, onProfile }) {
   const [query, set] = useState('');
   return (
     <Modal title="Channel members" onClose={close}>
@@ -87,7 +87,7 @@ export function Roster({ members, presence, close }) {
           value={query}
           onChange={(e) => set(e.target.value)}
         />
-        {['Online', 'Do Not Disturb', 'Offline'].map((state) => {
+        {['Online', 'Idle', 'Do Not Disturb', 'Offline'].map((state) => {
           const rows = members
             .filter(
               (m) =>
@@ -102,11 +102,11 @@ export function Roster({ members, presence, close }) {
                   {state} · {rows.length}
                 </h3>
                 {rows.map((m) => (
-                  <div className="roster-row" key={m.id}>
+                  <button className="roster-row" key={m.id} onClick={() => onProfile(m)}>
                     <Avatar person={m} small />
                     <b>{m.name}</b>
                     <small>{m.role}</small>
-                  </div>
+                  </button>
                 ))}
               </section>
             )
