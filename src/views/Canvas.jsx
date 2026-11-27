@@ -25,6 +25,7 @@ import { Btn, ErrorText, Label, Modal, More, usePages, useJob } from '../ui.jsx'
 import { newId, mayContribute } from '../../functions/core/model.mjs';
 import { PeoplePicker } from './Sharing.jsx';
 import { quickMenu } from '../Navigation.jsx';
+import { boundsOf, isShape as isNode, resizeFromCorner, shapeSize } from '../whiteboardGeometry.mjs';
 import '../whiteboard.css';
 
 const tools = [
@@ -40,7 +41,6 @@ const tools = [
   ['text', 'Plain text', Type],
   ['sticky', 'Sticky note', StickyNote],
 ];
-const isNode = (e) => e && !['pen', 'segment', 'line'].includes(e.kind);
 const clamp = (n) => Math.max(0.15, Math.min(4, n));
 export async function newCanvas(api, name) {
   return api.command('canvas.save', {
@@ -195,7 +195,7 @@ function Sharing({ api, doc, members, close, refresh }) {
     </Modal>
   );
 }
-function Shape({ item: i, selected, nodes }) {
+function Shape({ item: i, selected, nodes, editor }) {
   const attrs = {
     'data-id': i.id,
     className: 'wb-object' + (selected ? ' selected' : ''),
@@ -226,28 +226,28 @@ function Shape({ item: i, selected, nodes }) {
       </g>
     );
   }
+  const { width, height } = shapeSize(i);
+  const halfW = width / 2,
+    halfH = height / 2;
+  const labelWidth = i.kind === 'diamond' ? width * 0.65 : width - 8;
+  const labelHeight = i.kind === 'diamond' ? height * 0.58 : height - 6;
   return (
     <g {...attrs} transform={'translate(' + i.x + ' ' + i.y + ')'}>
       {i.kind === 'diamond' ? (
-        <polygon points="0,-45 86,0 0,45 -86,0" />
+        <polygon points={`0,${-halfH} ${halfW},0 0,${halfH} ${-halfW},0`} />
       ) : i.kind === 'ellipse' ? (
-        <ellipse rx="83" ry="40" />
+        <ellipse rx={halfW} ry={halfH} />
       ) : i.kind !== 'text' ? (
         <rect
-          x="-78"
-          y="-39"
-          width="156"
-          height="78"
+          x={-halfW}
+          y={-halfH}
+          width={width}
+          height={height}
           rx={i.kind === 'sticky' ? 2 : 8}
           style={i.kind === 'sticky' ? { fill: i.color } : undefined}
         />
       ) : null}
-      <foreignObject
-        x={i.kind === 'diamond' ? -52 : -74}
-        y="-36"
-        width={i.kind === 'diamond' ? 104 : 148}
-        height="72"
-      >
+      <foreignObject x={-labelWidth / 2} y={-labelHeight / 2} width={labelWidth} height={labelHeight}>
         <div
           className={'wb-label ' + i.kind}
           style={{
@@ -266,9 +266,52 @@ function Shape({ item: i, selected, nodes }) {
               : {}),
           }}
         >
-          {i.label || (i.kind === 'text' ? 'Text' : '')}
+          {editor || i.label || (i.kind === 'text' ? 'Text' : '')}
         </div>
       </foreignObject>
+    </g>
+  );
+}
+function ResizeHandles({ item, zoom, nodes }) {
+  let handles, frame;
+  if (item.kind === 'line') {
+    handles = ['from', 'to'].map((end) => [end, nodes.get(item[end])?.x, nodes.get(item[end])?.y]);
+  } else if (item.kind === 'segment') {
+    handles = [
+      ['start', ...item.points[0]],
+      ['end', ...item.points.at(-1)],
+    ];
+  } else {
+    const { left, top, right, bottom } = boundsOf(item);
+    frame = (
+      <rect className="wb-selection" x={left} y={top} width={right - left} height={bottom - top} />
+    );
+    handles = [
+      ['nw', left, top],
+      ['ne', right, top],
+      ['sw', left, bottom],
+      ['se', right, bottom],
+    ];
+  }
+  const size = 9 / zoom;
+  return (
+    <g className="wb-handles">
+      {frame}
+      {handles
+        .filter(([, x, y]) => x != null && y != null)
+        .map(([name, x, y]) => (
+          <rect
+            key={name}
+            data-handle={name}
+            x={x - size / 2}
+            y={y - size / 2}
+            width={size}
+            height={size}
+            className={'wb-handle handle-' + name}
+          >
+            <title>{item.kind === 'line' ? 'Reconnect' : 'Resize'}</title>
+          </rect>
+        ))}
     </g>
   );
 }
@@ -281,9 +324,11 @@ export function CanvasEditor({ api, me, members, id, room = '', session = '', ba
   const [view, setView] = useState({ x: 100, y: 100, z: 1 }),
     [preview, showPreview] = useState(null),
     [dialog, setDialog] = useState(''),
-    [draft, setDraft] = useState('');
+    [draft, setDraft] = useState(''),
+    [editing, setEditing] = useState('');
   const surface = useRef(),
     gesture = useRef(),
+    labelInput = useRef(),
     viewRef = useRef(view);
   viewRef.current = view;
   const elements = doc?.elements || [],
@@ -295,6 +340,12 @@ export function CanvasEditor({ api, me, members, id, room = '', session = '', ba
       : [...elements, preview]
     : elements;
   const nodes = new Map(display.filter(isNode).map((e) => [e.id, e]));
+  useEffect(() => {
+    if (editing) {
+      labelInput.current?.focus();
+      labelInput.current?.select();
+    }
+  }, [editing]);
   function zoom(factor, clientX, clientY) {
     const b = surface.current.getBoundingClientRect(),
       px = clientX == null ? b.width / 2 : clientX - b.left,
@@ -320,13 +371,16 @@ export function CanvasEditor({ api, me, members, id, room = '', session = '', ba
     return [(e.clientX - b.left - v.x) / v.z, (e.clientY - b.top - v.y) / v.z];
   }
   function down(e) {
-    if (e.button === 2) return;
+    if (e.target.closest('textarea') || gesture.current || e.button > 2) return;
     const [x, y] = pos(e),
       id = e.target.closest('[data-id]')?.dataset.id,
       obj = elements.find((i) => i.id === id);
-    if (e.button === 1 || mode === 'hand' || (!can && !obj)) {
+    const handle = e.target.closest('[data-handle]')?.dataset.handle;
+    if (e.button === 2 || e.button === 1 || mode === 'hand' || (!can && !obj)) {
       e.preventDefault();
-      gesture.current = { pan: true, x: e.clientX, y: e.clientY, view };
+      gesture.current = { pan: true, right: e.button === 2, obj, x: e.clientX, y: e.clientY, view };
+    } else if (handle && can && item) {
+      gesture.current = { handle, obj: item };
     } else if (mode === 'select') {
       pick(id || '');
       if (!can || !obj || obj.kind === 'line') return;
@@ -356,24 +410,39 @@ export function CanvasEditor({ api, me, members, id, room = '', session = '', ba
       pick(obj.id);
       tool('select');
       if (['text', 'textbox', 'sticky'].includes(mode)) {
-        setDraft('');
-        setDialog('text');
+        edit(obj);
       }
       return;
     } else return;
-    surface.current.setPointerCapture(e.pointerId);
+    e.target.setPointerCapture(e.pointerId);
   }
   function move(e) {
     const g = gesture.current;
     if (!g) return;
     if (g.pan) {
+      if (!g.moved && Math.hypot(e.clientX - g.x, e.clientY - g.y) < 4) return;
+      g.moved = true;
       setView({ ...g.view, x: g.view.x + e.clientX - g.x, y: g.view.y + e.clientY - g.y });
       return;
     }
     const [x, y] = pos(e),
       o = g.obj;
     let next;
-    if (g.fresh) {
+    if (g.handle) {
+      if (o.kind === 'line') {
+        const under = document
+          .elementsFromPoint(e.clientX, e.clientY)
+          .map((el) => nodes.get(el.closest('[data-id]')?.dataset.id))
+          .find(Boolean);
+        const other = g.handle === 'to' ? o.from : o.to;
+        next = under && under.id !== other ? { ...o, [g.handle]: under.id } : null;
+      } else if (o.kind === 'segment') {
+        next = {
+          ...o,
+          points: g.handle === 'start' ? [[x, y], o.points.at(-1)] : [o.points[0], [x, y]],
+        };
+      } else next = resizeFromCorner(o, g.handle, x, y);
+    } else if (g.fresh) {
       const points =
         o.kind === 'segment'
           ? [o.points[0], [x, y]]
@@ -388,33 +457,61 @@ export function CanvasEditor({ api, me, members, id, room = '', session = '', ba
     g.last = next;
     showPreview(next);
   }
-  function end(cancel) {
+  function end(e, cancel) {
     const g = gesture.current;
     gesture.current = null;
     showPreview(null);
+    if (!cancel && g?.right && !g.moved) openMenu(e, g.obj);
     if (!cancel && g?.last) change(g.fresh ? { add: [g.last] } : { update: [g.last] });
   }
   function edit(obj) {
     if (!can || !isNode(obj)) return;
     pick(obj.id);
-    setDraft(obj.label);
-    setDialog('text');
+    setDraft(obj.label || '');
+    setEditing(obj.id);
+  }
+  function finishText(commit) {
+    const target = elements.find((o) => o.id === editing);
+    if (commit && target && can && draft !== target.label)
+      change({ update: [{ ...target, label: draft }] });
+    setEditing('');
+  }
+  function openMenu(e, o) {
+    const id = o?.id;
+    quickMenu(e, [
+      { label: 'Fit to view', run: fit },
+      can && isNode(o) && { label: 'Edit text', run: () => edit(o) },
+      can &&
+        o &&
+        o.kind !== 'line' && {
+          label: 'Duplicate',
+          run: () => {
+            const copy = { ...o, id: newId('shape') };
+            if (o.points) copy.points = o.points.map(([x, y]) => [x + 20, y + 20]);
+            else {
+              copy.x += 20;
+              copy.y += 20;
+            }
+            change({ add: [copy] });
+            pick(copy.id);
+          },
+        },
+      can && o && { label: 'Remove item', run: () => remove(id) },
+    ]);
   }
   function remove(id) {
     change({ remove: [id] });
     pick('');
   }
   function fit() {
-    const bounds = elements.flatMap(
-      (e) =>
-        e.points ||
-        (isNode(e)
-          ? [
-              [e.x - 90, e.y - 45],
-              [e.x + 90, e.y + 45],
-            ]
-          : []),
-    );
+    const bounds = elements.flatMap((e) => {
+      if (e.kind === 'line') return [];
+      const { left, top, right, bottom } = boundsOf(e);
+      return [
+        [left, top],
+        [right, bottom],
+      ];
+    });
     if (!bounds.length) {
       setView({ x: 100, y: 100, z: 1 });
       return;
@@ -486,32 +583,16 @@ export function CanvasEditor({ api, me, members, id, room = '', session = '', ba
           }}
           onPointerDown={down}
           onPointerMove={move}
-          onPointerUp={() => end(false)}
-          onPointerCancel={() => end(true)}
-          onDoubleClick={(e) => edit(nodes.get(e.target.closest('[data-id]')?.dataset.id))}
+          onPointerUp={(e) => end(e, false)}
+          onPointerCancel={(e) => end(e, true)}
+          onDoubleClick={(e) => {
+            if (e.button === 0 && !e.target.closest('textarea,[data-handle]'))
+              edit(nodes.get(e.target.closest('[data-id]')?.dataset.id));
+          }}
           onContextMenu={(e) => {
-            const id = e.target.closest('[data-id]')?.dataset.id,
-              o = elements.find((e) => e.id === id);
-            quickMenu(e, [
-              { label: 'Fit to view', run: fit },
-              can && isNode(o) && { label: 'Edit text', run: () => edit(o) },
-              can &&
-                o &&
-                o.kind !== 'line' && {
-                  label: 'Duplicate',
-                  run: () => {
-                    const copy = { ...o, id: newId('shape') };
-                    if (o.points) copy.points = o.points.map(([x, y]) => [x + 20, y + 20]);
-                    else {
-                      copy.x += 20;
-                      copy.y += 20;
-                    }
-                    change({ add: [copy] });
-                    pick(copy.id);
-                  },
-                },
-              can && o && { label: 'Remove item', run: () => remove(id) },
-            ]);
+            if (e.target.closest('textarea')) return;
+            e.preventDefault();
+            if (e.nativeEvent.button !== 2 && !gesture.current) openMenu(e, item);
           }}
           onKeyDown={(e) => {
             if (can && selected && ['Delete', 'Backspace'].includes(e.key)) {
@@ -528,8 +609,44 @@ export function CanvasEditor({ api, me, members, id, room = '', session = '', ba
             {[...display]
               .sort((a, b) => (a.kind !== 'line') - (b.kind !== 'line'))
               .map((e) => (
-                <Shape key={e.id} item={e} selected={selected === e.id} nodes={nodes} />
+                <Shape
+                  key={e.id}
+                  item={e}
+                  selected={selected === e.id}
+                  nodes={nodes}
+                  editor={
+                    editing === e.id &&
+                    can && (
+                      <textarea
+                        ref={labelInput}
+                        aria-label="Shape text"
+                        rows={1}
+                        maxLength={2000}
+                        value={draft}
+                        onChange={(event) => setDraft(event.target.value)}
+                        onBlur={() => finishText(true)}
+                        onKeyDown={(event) => {
+                          event.stopPropagation();
+                          if (
+                            event.key === 'Escape' ||
+                            (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing)
+                          ) {
+                            event.preventDefault();
+                            finishText(event.key === 'Enter');
+                          }
+                        }}
+                      />
+                    )
+                  }
+                />
               ))}
+            {can && !editing && mode === 'select' && item && (
+              <ResizeHandles
+                item={preview?.id === item.id ? preview : item}
+                zoom={view.z}
+                nodes={nodes}
+              />
+            )}
           </g>
         </svg>
         <div className="wb-tools" role="toolbar" aria-label="Drawing tools">
@@ -538,7 +655,7 @@ export function CanvasEditor({ api, me, members, id, room = '', session = '', ba
             .map(([k, label, Icon]) => (
               <button
                 key={k}
-                title={label}
+                title={k === 'hand' ? 'Pan (or drag with the right mouse button)' : label}
                 aria-label={label}
                 aria-pressed={mode === k}
                 onClick={() => {
@@ -635,25 +752,21 @@ export function CanvasEditor({ api, me, members, id, room = '', session = '', ba
           }}
         />
       )}
-      {['text', 'name'].includes(dialog) && (
-        <Modal
-          title={dialog === 'name' ? 'Rename whiteboard' : 'Edit text'}
-          onClose={() => setDialog('')}
-        >
+      {dialog === 'name' && (
+        <Modal title="Rename whiteboard" onClose={() => setDialog('')}>
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (dialog === 'name') change({ name: draft });
-              else if (item) change({ update: [{ ...item, label: draft }] });
+              change({ name: draft });
               setDialog('');
             }}
           >
             <div className="form-body">
-              <Label name={dialog === 'name' ? 'Whiteboard name' : 'Text'}>
+              <Label name="Whiteboard name">
                 <textarea
                   autoFocus
-                  required={dialog === 'name'}
-                  maxLength={dialog === 'name' ? 100 : 2000}
+                  required
+                  maxLength={100}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
                 />

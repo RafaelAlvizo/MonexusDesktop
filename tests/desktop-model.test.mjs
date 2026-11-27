@@ -1,12 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachmentType } from '../src/attachmentTypes.mjs';
+import { boundsOf, resizeFromCorner } from '../src/whiteboardGeometry.mjs';
 import { callVideo } from '../src/callVideo.mjs';
 import {
   boardTemplate, withPause, updateTicketTimer,
   channelAllows,
   figmaEmbed,cleanAcl,mayContribute,
 } from '../functions/core/model.mjs';
+
+test('whiteboard resizing anchors the opposite corner and supports legacy shapes and strokes', () => {
+  const oldDiamond = { kind: 'diamond', x: 100, y: 50 };
+  const bounds = boundsOf(oldDiamond);
+  assert.deepEqual(bounds, { left: 14, right: 186, top: 5, bottom: 95 });
+  assert.deepEqual(boundsOf(resizeFromCorner(oldDiamond, 'nw', -40, -20)),
+    { left: -40, right: 186, top: -20, bottom: 95 });
+  const stroke = { kind: 'pen', points: [[10, 10], [40, 50], [70, 90]] };
+  assert.deepEqual(resizeFromCorner(stroke, 'se', 130, 170).points, [[10, 10], [70, 90], [130, 170]]);
+  const vertical = { kind: 'pen', points: [[5, 5], [5, 35]] };
+  assert.deepEqual(resizeFromCorner(vertical, 'ne', 65, -25).points, [[5, -25], [5, 35]]);
+});
 
 test('a cancelled share keeps the camera and closing during capture releases the late stream', async () => {
   const track = () => ({readyState:'live', stop() { this.readyState='ended'; }});

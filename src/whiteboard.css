@@ -70,6 +70,48 @@
   font-size: 13px;
   color: var(--ink);
   padding: 2px;
+  box-sizing: border-box;
+}
+.wb-label textarea {
+  width: 100%;
+  min-height: 1.4em;
+  height: auto;
+  field-sizing: content;
+  max-height: 100%;
+  resize: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  user-select: text;
+  cursor: text;
+}
+.wb-selection,
+.wb-handle {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.wb-selection {
+  fill: none;
+  pointer-events: none;
+  stroke-dasharray: 4 3;
+}
+.wb-handle {
+  fill: var(--paper);
+  cursor: crosshair;
+}
+.wb-handle.handle-nw,
+.wb-handle.handle-se {
+  cursor: nwse-resize;
+}
+.wb-handle.handle-ne,
+.wb-handle.handle-sw {
+  cursor: nesw-resize;
 }
 .wb-header {
   display: flex;

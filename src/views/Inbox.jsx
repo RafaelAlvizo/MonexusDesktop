@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Inbox as Tray, RotateCw } from 'lucide-react';
 import { Btn, Empty, More, usePages, useJob, ErrorText } from '../ui.jsx';
 import { eventNames } from '../../functions/core/model.mjs';
 export default function Inbox({ api, open }) {
   const page = usePages(api, 'inbox.list', {}),
     job = useJob();
+  useEffect(() => api.watchInbox(page.refresh, error => job.setError(error.message)), [api]);
   return (
     <div className="page">
       <div className="page-head">
@@ -33,7 +34,7 @@ export default function Inbox({ api, open }) {
               <h3>{n.title}</h3>
               <p>{n.body}</p>
             </div>
-            {(n.board || n.channel || n.eodDay) && <Btn onClick={() => open(n)}>Open</Btn>}
+            {(n.board || n.channel || n.eodDay) && <Btn onClick={() => open(n)}>{n.board && !n.ticket ? 'Open board' : 'Open'}</Btn>}
             {!n.read && (
               <Btn
                 onClick={() =>

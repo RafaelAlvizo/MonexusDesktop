@@ -48,6 +48,7 @@ export const events = [
   'direct_message',
   'channel_message',
   'eod_report',
+  'ticket_activity',
 ];
 export const eventNames = {
   pr_opened: 'Pull request opened',
@@ -56,6 +57,7 @@ export const eventNames = {
   pr_closed: 'Closed without merge',
   push: 'Push',
   assignment: 'Ticket assignment',
+  ticket_activity: 'Board ticket activity',
   mention: 'Mention',
   announcement: 'Announcement',
   direct_message: 'Direct message',
@@ -63,6 +65,7 @@ export const eventNames = {
   eod_report: 'End-of-day report',
 };
 export const methods = ['inbox', 'banner', 'sound'];
+export const whiteboardSizeLimits = { min: 24, max: 16000 };
 export const isAdmin = (user) => ['owner', 'admin'].includes(user?.role);
 export const level = (board, user) =>
   !user?.active

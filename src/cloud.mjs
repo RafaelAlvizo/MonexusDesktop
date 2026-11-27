@@ -392,6 +392,10 @@ async function getWorkspace(user) {
         fail,
       );
     },
+    watchInbox(cb, fail) {
+      return f.onSnapshot(f.query(f.collection(db, 'members', uid, 'inbox'),
+        f.orderBy('at', 'desc'), f.limit(40)), cb, fail);
+    },
     watchUnreadConversations(cb, fail) {
       return f.onSnapshot(f.query(f.collection(db, 'members', uid, 'conversationActivity'),
         f.where('unread', '==', true)), snap => cb(snap.docs.map(d => ({ channel: d.id, peer: d.data().peer }))), fail);
@@ -494,7 +498,7 @@ async function getWorkspace(user) {
               seen.add(change.doc.id);
               const e = change.doc.data();
               if (Date.now() - e.at < 120000) {
-                if (e.message)
+                if (e.message || e.board)
                   command('notification.detail', { id: e.id })
                     .then((n) => {
                       if (n && live) cb(n);
