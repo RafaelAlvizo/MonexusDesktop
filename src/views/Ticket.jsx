@@ -392,7 +392,17 @@ export default function Ticket({
                     disabled={!canMove}
                     onChange={(e) => move(e.target.value)}
                   >
-                    {board.columns.map((c) => (
+                    {[
+                      ...board.columns.filter((c) => c.id !== 'backlog'),
+                      ...(['owner', 'admin'].includes(me.role)
+                        ? [
+                            board.columns.find((c) => c.id === 'backlog') || {
+                              id: 'backlog',
+                              name: 'Private backlog',
+                            },
+                          ]
+                        : []),
+                    ].map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
                       </option>

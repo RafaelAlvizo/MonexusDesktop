@@ -8,7 +8,13 @@ import {
 } from 'lucide-react';
 import { Btn, Empty, Check, Label } from '../ui.jsx';
 import { isAdmin } from '../../functions/core/model.mjs';
-export default function Directory({ boards, me, choose, create }) {
+export default function Directory({
+  boards,
+  me,
+  choose,
+  create,
+  navigateOrder,
+}) {
   const [search, set] = useState('');
   const storageKey = 'monexus.boardDirectory.' + me.id;
   const [options, showOptions] = useState(false);
@@ -103,30 +109,37 @@ export default function Directory({ boards, me, choose, create }) {
             <div
               className={appearance.layout === 'grid' ? 'directory-cards' : ''}
             >
-              {items
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map((b) => (
-                  <button
-                    key={b.id}
-                    className="resource-row"
-                    onClick={() => choose(b.id)}
-                  >
-                    <i className={'dot ' + b.color} />
-                    <span className="grow">
-                      <strong>{b.name}</strong>
-                      {appearance.description !== false && (
-                        <small>{b.description}</small>
-                      )}
-                    </span>
-                    {appearance.counts !== false && (
-                      <small>
-                        {Object.values(b.counts).reduce((a, b) => a + b, 0)}{' '}
-                        tickets · {b.memberIds.length} members
-                      </small>
+              {items.map((b) => (
+                <button
+                  key={b.id}
+                  {...navigateOrder.props(
+                    'Boards',
+                    b.id,
+                    boards.map((b) => b.id),
+                  )}
+                  className="resource-row"
+                  onClick={() => choose(b.id)}
+                >
+                  <i className={'dot ' + b.color} />
+                  <span className="grow">
+                    <strong>{b.name}</strong>
+                    {appearance.description !== false && (
+                      <small>{b.description}</small>
                     )}
-                    <ArrowUpRight size={16} />
-                  </button>
-                ))}
+                  </span>
+                  {appearance.counts !== false && (
+                    <small>
+                      {Object.entries(b.counts).reduce(
+                        (total, [key, count]) =>
+                          total + (key === 'backlog' ? 0 : count),
+                        0,
+                      )}{' '}
+                      tickets · {b.memberIds.length} members
+                    </small>
+                  )}
+                  <ArrowUpRight size={16} />
+                </button>
+              ))}
             </div>
           </section>
         ))}

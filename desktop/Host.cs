@@ -20,6 +20,57 @@ internal class WorkspaceWindow : Form {
     readonly EventWaitHandle showEvent;
     RegisteredWaitHandle showWait;
     bool quitting;
+    int unread;
+    Icon badgeIcon;
+    const int OverlaySlot=18;
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int TaskbarInit(IntPtr self);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall,CharSet=CharSet.Unicode)] delegate int SetOverlay(IntPtr self,IntPtr hwnd,IntPtr icon,[MarshalAs(UnmanagedType.LPWStr)]string description);
+    [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr handle);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern uint RegisterWindowMessage(string name);
+    static readonly uint TaskbarReady=RegisterWindowMessage("TaskbarButtonCreated");
+    protected override void WndProc(ref Message message){base.WndProc(ref message);if(message.Msg==TaskbarReady && unread>0)SetBadge(unread);}
+    static Icon CreateBadgeIcon(int unread) {
+        if(unread<=0)return null;
+        using(var bitmap=new Bitmap(32,32))
+        using(var g=Graphics.FromImage(bitmap))
+        using(var font=new Font("Segoe UI",unread>9?12:16,FontStyle.Bold,GraphicsUnit.Pixel))
+        using(var format=new StringFormat { Alignment=StringAlignment.Center, LineAlignment=StringAlignment.Center }) {
+            g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.FillEllipse(Brushes.Firebrick,0,0,31,31);
+            g.DrawString(unread>=100?"99+":unread.ToString(),font,Brushes.White,new RectangleF(0,0,32,32),format);
+            IntPtr handle=bitmap.GetHicon();
+            try { using(var tmp=Icon.FromHandle(handle))return (Icon)tmp.Clone(); }
+            finally { DestroyIcon(handle); }
+        }
+    }
+    static bool ApplyTaskbarOverlay(IntPtr hwnd,Icon icon,int count) {
+        object taskbar=null;
+        IntPtr face=IntPtr.Zero,unknown=IntPtr.Zero;
+        try {
+            taskbar=Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("56FDF344-FD6D-11D0-958A-006097C9A090")));
+            unknown=Marshal.GetIUnknownForObject(taskbar);
+            var iid=new Guid("EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF");
+            if(Marshal.QueryInterface(unknown,ref iid,out face)!=0)return false;
+            var table=Marshal.ReadIntPtr(face);
+            var init=(TaskbarInit)Marshal.GetDelegateForFunctionPointer(Marshal.ReadIntPtr(table,3*IntPtr.Size),typeof(TaskbarInit));
+            if(init(face)<0)return false;
+            var set=(SetOverlay)Marshal.GetDelegateForFunctionPointer(Marshal.ReadIntPtr(table,OverlaySlot*IntPtr.Size),typeof(SetOverlay));
+            return set(face,hwnd,icon==null?IntPtr.Zero:icon.Handle,count+" unread notifications")>=0;
+        } catch(COMException) { return false; }
+        finally {
+            if(face!=IntPtr.Zero)Marshal.Release(face);
+            if(unknown!=IntPtr.Zero)Marshal.Release(unknown);
+            if(taskbar!=null)Marshal.ReleaseComObject(taskbar);
+        }
+    }
+    void SetBadge(int value) {
+        unread=Math.Max(0,Math.Min(100,value));
+        var prev=badgeIcon;badgeIcon=CreateBadgeIcon(unread);
+        tray.Icon=badgeIcon ?? Icon;
+        tray.Text=unread>0?"Monexus · "+unread+" unread":"Monexus Workspace";
+        ApplyTaskbarOverlay(Handle,badgeIcon,unread);
+        if(prev!=null)prev.Dispose();
+    }
     [DllImport("shell32.dll", CharSet=CharSet.Unicode)] static extern int SetCurrentProcessExplicitAppUserModelID(string id);
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
@@ -66,6 +117,7 @@ internal class WorkspaceWindow : Form {
                 try {
                     var msg=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(e.WebMessageAsJson);
                     string command=Convert.ToString(msg["command"]);
+                    if(command=="unread_badge")SetBadge(Convert.ToInt32(msg["count"]));
                     if(command=="meeting_alarm"){
                         meetingAlarm.Stop();
                         double delay=Convert.ToDouble(msg["delay"]);

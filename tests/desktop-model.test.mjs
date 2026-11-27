@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   boardTemplate,
   channelAllows,
-  figmaEmbed,
+  figmaEmbed,cleanAcl,mayContribute,
 } from '../functions/core/model.mjs';
 
 test('new boards include ticket labels and workflow columns', () => {
@@ -29,4 +29,15 @@ test('Figma embeds preserve the shared view and stay on the official embed origi
     figmaEmbed('https://example.com/board/abcdefghijklmnopqrstuv'),
   );
   assert.throws(() => figmaEmbed('https://www.figma.com/files/team/123'));
+});
+
+test('resource contribution policies distinguish roles, members and individual actions', () => {
+  const member={id:'alice',role:'member',active:true,groups:['design']};
+  const policy={docs:cleanAcl({groups:['design']}),drive:cleanAcl({users:['bob']})};
+  assert.equal(mayContribute(policy,'docs',member),true);
+  assert.equal(mayContribute(policy,'drive',member),false);
+  assert.equal(mayContribute({},'vault',{...member,role:'admin'}),false);
+  assert.equal(mayContribute({},'notes',member),true);
+  assert.equal(mayContribute(policy,'docs',{...member,active:false}),false);
+  assert.equal(mayContribute({docs:cleanAcl({everyone:true,exclude:['alice']})},'docs',member),false);
 });

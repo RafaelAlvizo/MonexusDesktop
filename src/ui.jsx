@@ -42,7 +42,7 @@ export function Avatar({ person, small = false }) {
   ];
   return (
     <span className={'avatar ' + tone + (small ? ' small' : '')} title={name}>
-      {person ? letters : '–'}
+      {person?.photo ? <img alt="" src={person.photo}/> : person ? letters : '–'}
     </span>
   );
 }

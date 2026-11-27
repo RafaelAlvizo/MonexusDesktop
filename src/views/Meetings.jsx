@@ -16,6 +16,8 @@ import {
   Check,
   ErrorText,
   useJob,
+  useLoad,
+  Tabs,
 } from '../ui.jsx';
 import { newId } from '../../functions/core/model.mjs';
 import { desktop, nativeAction } from '../native.mjs';
@@ -57,7 +59,33 @@ function Plan({ api, me, members, context, close, created }) {
     [duration, length] = useState(60),
     [auto, admission] = useState(true),
     [invited, invite] = useState([]),
-    [query, search] = useState('');
+    [query, search] = useState(''),
+    [guestType, typeGuests] = useState('People'),
+    [roleIds, setRoles] = useState([]),
+    [channels, setChannels] = useState([]);
+  const groups = useLoad(() => api.command('roles.list'), [api]),
+    channelList = useLoad(() => api.command('channel.list'), [api]);
+  const guests =
+    guestType === 'People'
+      ? members.filter((m) => m.active && m.id !== me.id)
+      : guestType === 'Roles'
+        ? groups.data || []
+        : (channelList.data || []).filter(
+            (c) => c.kind !== 'direct' && c.id !== channel?.id,
+          );
+  const selected =
+    guestType === 'People'
+      ? invited
+      : guestType === 'Roles'
+        ? roleIds
+        : channels;
+  const setGuests =
+    guestType === 'People'
+      ? invite
+      : guestType === 'Roles'
+        ? setRoles
+        : setChannels;
+
   const key = useRef(newId('meet')),
     job = useJob();
   return (
@@ -67,6 +95,7 @@ function Plan({ api, me, members, context, close, created }) {
       onClose={() => !job.busy && close()}
     >
       <form
+        className="scheduler-form"
         onSubmit={(e) => {
           e.preventDefault();
           job.run(async () => {
@@ -78,6 +107,8 @@ function Plan({ api, me, members, context, close, created }) {
               start: new Date(start).getTime(),
               duration: Number(duration),
               invited,
+              roleIds,
+              channels,
               auto,
             });
             await created(room);
@@ -97,14 +128,28 @@ function Plan({ api, me, members, context, close, created }) {
           </Label>
           <div className="form-grid">
             {!instant && (
-              <Label name="Starts at (local time)">
-                <input
-                  required
-                  type="datetime-local"
-                  value={start}
-                  onChange={(e) => setStart(e.target.value)}
-                />
-              </Label>
+              <>
+                <Label name="Date">
+                  <input
+                    required
+                    type="date"
+                    value={start.split('T')[0]}
+                    onChange={(e) =>
+                      setStart(e.target.value + 'T' + start.split('T')[1])
+                    }
+                  />
+                </Label>
+                <Label name="Start time">
+                  <input
+                    required
+                    type="time"
+                    value={start.split('T')[1]}
+                    onChange={(e) =>
+                      setStart(start.split('T')[0] + 'T' + e.target.value)
+                    }
+                  />
+                </Label>
+              </>
             )}
             <Label name="Duration">
               <select value={duration} onChange={(e) => length(e.target.value)}>
@@ -116,48 +161,59 @@ function Plan({ api, me, members, context, close, created }) {
               </select>
             </Label>
           </div>
-          {channel ? (
-            <p>
-              {channel.kind === 'direct'
-                ? 'Both people in this chat are invited.'
-                : 'Everyone in this channel is invited.'}
-            </p>
-          ) : (
-            <>
-              <Label name="Invite teammates">
-                <input
-                  type="search"
-                  placeholder="Find a teammate"
-                  value={query}
-                  onChange={(e) => search(e.target.value)}
-                />
-              </Label>
-              <div className="meeting-people">
-                {members
-                  .filter(
-                    (p) =>
-                      p.active &&
-                      p.id !== me.id &&
-                      p.name.toLowerCase().includes(query.toLowerCase()),
-                  )
-                  .map((p) => (
-                    <Check
-                      key={p.id}
-                      checked={invited.includes(p.id)}
-                      onChange={(e) =>
-                        invite(
-                          e.target.checked
-                            ? [...invited, p.id]
-                            : invited.filter((id) => id !== p.id),
-                        )
-                      }
-                    >
-                      {p.name}
-                    </Check>
-                  ))}
-              </div>
-            </>
-          )}
+          <section className="guest-section">
+            <h3>Guests</h3>
+            {channel && (
+              <p>
+                {channel.name} ·{' '}
+                {channel.kind === 'direct'
+                  ? 'Both people invited'
+                  : 'Entire channel invited'}
+              </p>
+            )}
+            <Tabs
+              values={['People', 'Roles', 'Channels']}
+              value={guestType}
+              onChange={(v) => {
+                typeGuests(v);
+                search('');
+              }}
+            />
+            <input
+              type="search"
+              aria-label="Find guests"
+              placeholder={'Find ' + guestType.toLowerCase() + '…'}
+              value={query}
+              onChange={(e) => search(e.target.value)}
+            />
+            <div className="meeting-people">
+              {guests
+                .filter((g) =>
+                  g.name.toLowerCase().includes(query.toLowerCase()),
+                )
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((g) => (
+                  <Check
+                    key={g.id}
+                    checked={selected.includes(g.id)}
+                    onChange={(e) =>
+                      setGuests(
+                        e.target.checked
+                          ? [...selected, g.id]
+                          : selected.filter((i) => i !== g.id),
+                      )
+                    }
+                  >
+                    {g.name}
+                  </Check>
+                ))}
+            </div>
+            <small>
+              {invited.length} people · {roleIds.length} roles ·{' '}
+              {channels.length + (channel ? 1 : 0)} channels
+            </small>
+            <ErrorText error={groups.error || channelList.error} />
+          </section>
           <Check checked={auto} onChange={(e) => admission(e.target.checked)}>
             Automatically admit invited people
           </Check>
@@ -172,7 +228,13 @@ function Plan({ api, me, members, context, close, created }) {
           <Btn onClick={close}>Cancel</Btn>
           <button
             className="btn primary"
-            disabled={job.busy || (!channel && !invited.length)}
+            disabled={
+              job.busy ||
+              (!channel &&
+                !invited.length &&
+                !roleIds.length &&
+                !channels.length)
+            }
           >
             {instant ? 'Start call' : 'Schedule meeting'}
           </button>

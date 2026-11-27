@@ -14,8 +14,10 @@ import {
   Search,
   ChevronLeft,
 } from 'lucide-react';
-import { newId } from '../../functions/core/model.mjs';
+import { newId, mayContribute } from '../../functions/core/model.mjs';
 import { Btn, ErrorText, Label, Modal, useJob, useLoad } from '../ui.jsx';
+import { quickMenu } from '../Navigation.jsx';
+import NoteBody from './NoteBody.jsx';
 import { PeoplePicker } from './Sharing.jsx';
 
 // Keep pending writes alive across workspace navigation, scoped to this sign-in session.
@@ -69,7 +71,7 @@ function notebook(api) {
         const sent = r.note;
         const saved = await api.command('notes.save', {
           ...sent,
-          title: sent.title.trim() || 'Untitled note',
+          title: sent.title || 'Untitled note',
         });
         if (r.note === sent) {
           r.note = saved;
@@ -121,6 +123,17 @@ function notebook(api) {
       book.flush(copy.id);
       return copy.id;
     },
+    async remove(id) {
+      const r = records.get(id);
+      if (!r) return;
+      clearTimeout(r.timer);
+      while (r.writing) await new Promise((resolve) => setTimeout(resolve, 30));
+      if (r.note.rev)
+        await api.command('notes.delete', { id, rev: r.note.rev });
+      records.delete(id);
+      generation++;
+      notify();
+    },
     dropEmpty(id) {
       const r = records.get(id);
       if (
@@ -149,7 +162,16 @@ function ShareNote({ note, members, close, apply }) {
       onClose={close}
     >
       <div className="form-body scroll">
-        <p>Choose teammates who can read this note.</p>
+        <b>People with access</b>
+        <p>
+          {members.find((m) => m.id === note.owner)?.name} (owner)
+          {shared.map(
+            (id) =>
+              ' · ' +
+              (members.find((m) => m.id === id)?.name || 'Former member') +
+              ' (viewer)',
+          )}
+        </p>
         <input
           aria-label="Find a teammate"
           type="search"
@@ -178,7 +200,7 @@ function ShareNote({ note, members, close, apply }) {
     </Modal>
   );
 }
-export default function Notes({ api, me, members }) {
+export default function Notes({ api, me, members, contributions }) {
   const book = notebook(api),
     records = useSyncExternalStore(book.subscribe, book.get);
   const [scope, setScope] = useState('mine'),
@@ -187,6 +209,8 @@ export default function Notes({ api, me, members }) {
     [search, find] = useState(''),
     [sort, setSort] = useState('updated'),
     [sharing, share] = useState(false),
+    [expanded, expand] = useState(false),
+    [deletion, confirm] = useState(null),
     [projectName, createProject] = useState(null),
     [mobile, showEditor] = useState(false),
     [loadError, setError] = useState(''),
@@ -241,6 +265,7 @@ export default function Notes({ api, me, members }) {
     );
   const note = list.find((n) => n.id === selected) || list[0],
     record = records.find((r) => r.note.id === note?.id);
+  const canCreate = mayContribute(contributions, 'notes', me);
   const owner = note?.owner === me.id;
   useEffect(() => {
     const id = note?.id;
@@ -285,6 +310,15 @@ export default function Notes({ api, me, members }) {
     return (
       <button
         key={name}
+        onContextMenu={(e) =>
+          quickMenu(e, [
+            { label: 'Open ' + name, run: onClick },
+            Icon === Folder && {
+              label: 'Delete project',
+              run: () => confirm({ project: name }),
+            },
+          ])
+        }
         className={'notebook-location ' + (active ? 'active' : '')}
         onClick={onClick}
       >
@@ -295,7 +329,11 @@ export default function Notes({ api, me, members }) {
     );
   }
   return (
-    <div className={'notebook ' + (mobile ? 'reading' : '')}>
+    <div
+      className={
+        'notebook ' + (expanded ? 'expanded ' : '') + (mobile ? 'reading' : '')
+      }
+    >
       <aside className="notebook-folders">
         <h1>Notes</h1>
         {sidebarButton(
@@ -317,6 +355,7 @@ export default function Notes({ api, me, members }) {
         </div>
         <button
           className="notebook-location new-project"
+          disabled={!canCreate}
           onClick={() => createProject('')}
         >
           <FolderPlus size={16} />
@@ -335,7 +374,15 @@ export default function Notes({ api, me, members }) {
       <section className="notebook-list">
         <div className="section-line">
           <h2>{collection}</h2>
-          <Btn kind="primary compact" icon={SquarePen} onClick={compose}>
+          {project && (
+            <Btn onClick={() => confirm({ project })}>Delete project</Btn>
+          )}
+          <Btn
+            kind="primary compact"
+            icon={SquarePen}
+            disabled={!canCreate}
+            onClick={compose}
+          >
             New note
           </Btn>
         </div>
@@ -368,6 +415,28 @@ export default function Notes({ api, me, members }) {
           {list.map((n) => (
             <button
               key={n.id}
+              onContextMenu={(e) =>
+                quickMenu(e, [
+                  {
+                    label: 'Open note',
+                    run: () => {
+                      select(n.id);
+                      showEditor(true);
+                    },
+                  },
+                  n.owner === me.id && {
+                    label: 'Share note',
+                    run: () => {
+                      select(n.id);
+                      share(true);
+                    },
+                  },
+                  n.owner === me.id && {
+                    label: 'Delete note',
+                    run: () => confirm({ id: n.id, title: n.title }),
+                  },
+                ])
+              }
               className={'note-summary ' + (note?.id === n.id ? 'active' : '')}
               onClick={() => {
                 select(n.id);
@@ -399,6 +468,16 @@ export default function Notes({ api, me, members }) {
         {note ? (
           <>
             <div className="note-sheet-tools">
+              <Btn onClick={() => expand(!expanded)}>
+                {expanded ? 'Show My Notes' : 'Hide My Notes'}
+              </Btn>
+              {owner && (
+                <Btn
+                  onClick={() => confirm({ id: note.id, title: note.title })}
+                >
+                  Delete note
+                </Btn>
+              )}
               <button className="note-back" onClick={() => showEditor(false)}>
                 <ChevronLeft size={16} /> Notes
               </button>
@@ -422,10 +501,23 @@ export default function Notes({ api, me, members }) {
                   disabled={!note.title.trim() && !note.body.trim()}
                   onClick={() => share(true)}
                 >
-                  Share
+                  {note.shared.length
+                    ? 'Shared · ' + note.shared.length
+                    : 'Share'}
                 </Btn>
               )}
             </div>
+            {note.shared.length > 0 && (
+              <small className="note-audience">
+                Access ·{' '}
+                {[note.owner, ...note.shared]
+                  .map(
+                    (id) =>
+                      members.find((m) => m.id === id)?.name || 'Former member',
+                  )
+                  .join(', ')}
+              </small>
+            )}
             {owner ? (
               <div className="note-paper">
                 <label className="note-project">
@@ -446,6 +538,9 @@ export default function Notes({ api, me, members }) {
                 </label>
                 <input
                   className="note-title-input"
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoComplete="off"
                   ref={titleRef}
                   aria-label="Note title"
                   placeholder="Untitled note"
@@ -456,15 +551,10 @@ export default function Notes({ api, me, members }) {
                     book.change(note.id, { title: e.target.value });
                   }}
                 />
-                <textarea
-                  aria-label="Note body"
-                  placeholder="Start writing…"
-                  maxLength={100000}
-                  value={note.body}
-                  onChange={(e) => {
-                    select(note.id);
-                    book.change(note.id, { body: e.target.value });
-                  }}
+                <NoteBody
+                  key={note.id}
+                  note={note}
+                  change={(patch) => book.change(note.id, patch)}
                 />
                 {record.error && (
                   <div>
@@ -484,7 +574,7 @@ export default function Notes({ api, me, members }) {
             ) : (
               <article className="note-paper">
                 <h2>{note.title}</h2>
-                <p>{note.body}</p>
+                <NoteBody key={note.id} note={note} />
               </article>
             )}
           </>
@@ -495,13 +585,55 @@ export default function Notes({ api, me, members }) {
               {scope === 'shared' ? 'Shared notes appear here' : 'Start a note'}
             </h3>
             {scope === 'mine' && (
-              <Btn icon={SquarePen} onClick={compose}>
+              <Btn icon={SquarePen} disabled={!canCreate} onClick={compose}>
                 Create a note
               </Btn>
             )}
           </div>
         )}
       </section>
+      {deletion && (
+        <Modal
+          title={deletion.project ? 'Delete project?' : 'Delete note?'}
+          onClose={() => confirm(null)}
+        >
+          <div className="form-body">
+            {deletion.project
+              ? 'Notes in ' + deletion.project + ' will move to My notes.'
+              : 'Delete “' +
+                (deletion.title || 'Untitled note') +
+                '” for everyone who has access?'}
+            <ErrorText error={job.error} />
+          </div>
+          <footer>
+            <Btn onClick={() => confirm(null)}>Cancel</Btn>
+            <Btn
+              disabled={job.busy}
+              onClick={() =>
+                job.run(async () => {
+                  if (deletion.project) {
+                    await Promise.all(
+                      records.map((r) => book.flush(r.note.id)),
+                    );
+                    await api.command('notes.project.delete', {
+                      name: deletion.project,
+                    });
+                    await book.reload();
+                    catalog.refresh();
+                    choose('mine');
+                  } else {
+                    await book.remove(deletion.id);
+                    select('');
+                  }
+                  confirm(null);
+                })
+              }
+            >
+              {deletion.project ? 'Delete project' : 'Delete note'}
+            </Btn>
+          </footer>
+        </Modal>
+      )}
       {sharing && note && (
         <ShareNote
           {...{ note, members }}

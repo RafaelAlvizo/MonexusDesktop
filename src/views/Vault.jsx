@@ -1,3 +1,4 @@
+import { mayContribute } from '../../functions/core/model.mjs';
 import FileBrowser from './FileBrowser.jsx';
 import {
   Permissions,
@@ -186,7 +187,12 @@ function Entry({ api, me, members, folder, kind, onClose, saved }) {
         )}
         <details>
           <summary>Permissions · {accessSummary(v, me.id)}</summary>
-          <ViewAccess {...{ api, members }} value={v} change={update} />
+          <ViewAccess
+            {...{ api, members }}
+            allowIndependent={me.role === 'owner'}
+            value={v}
+            change={update}
+          />
         </details>
         <ErrorText error={job.error} />
       </div>
@@ -311,7 +317,7 @@ function Audit({ api }) {
     </div>
   );
 }
-export default function Vault({ api, me, members, tell }) {
+export default function Vault({ api, me, members, tell, contributions }) {
   const [tab, tabs] = useState('Items'),
     [add, setAdd] = useState(''),
     [path, setPath] = useState([]),
@@ -399,7 +405,7 @@ export default function Vault({ api, me, members, tell }) {
           permissions={editAccess}
           move={owner ? setMoving : null}
           tools={
-            owner && (
+            mayContribute(contributions, 'vault', me) && (
               <>
                 <Btn kind="primary" icon={Plus} onClick={() => setAdd('text')}>
                   New secure text

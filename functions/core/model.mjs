@@ -240,6 +240,10 @@ export function cleanConfig(input, previous) {
       unique(input.columns, 'id'),
     'A board needs 1–32 uniquely identified columns.',
   );
+  check(
+    input.columns.some((c) => c.id !== 'backlog'),
+    'Keep at least one public board stage.',
+  );
   cfg.columns = input.columns.map((c) => {
     id(c.id);
     check(colors.includes(c.color), 'Invalid column color.');
@@ -465,11 +469,11 @@ export function aclAllows(acl, user) {
   return !!(
     user?.active &&
     acl &&
-    !acl.exclude.includes(user.id) &&
+    !(acl.exclude || []).includes(user.id) &&
     (acl.everyone ||
-      acl.roles.includes(user.role) ||
-      (acl.groups || []).some(g => user.groups?.includes(g)) ||
-      acl.users.includes(user.id))
+      (acl.roles || []).includes(user.role) ||
+      (acl.groups || []).some((g) => user.groups?.includes(g)) ||
+      (acl.users || []).includes(user.id))
   );
 }
 export const defaultPrefs = {
@@ -523,4 +527,22 @@ export function channelAllows(ch, user, action) {
   if (!action) return true;
   const role = ch.permissions[action];
   return role === 'member' || (role === 'admin' && isAdmin(user));
+}
+
+export const contributionLabels = {
+  docs: 'Add document links',
+  docsFiles: 'Upload document files',
+  drive: 'Upload to Drive',
+  links: 'Add company links',
+  figma: 'Add shared Figma files',
+  vault: 'Add sensitive data',
+  notes: 'Create notes and projects',
+  whiteboard: 'Create and edit whiteboards',
+};
+export function mayContribute(policy, key, user) {
+  if (!user?.active) return false;
+  const acl = policy?.[key];
+  if (!acl && key === 'vault') return user.role === 'owner';
+  if (!acl) return isAdmin(user) || ['notes', 'whiteboard'].includes(key);
+  return user.role === 'owner' || aclAllows(acl, user);
 }

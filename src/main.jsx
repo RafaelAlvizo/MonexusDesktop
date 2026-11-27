@@ -30,6 +30,7 @@ import {
 import '@fontsource-variable/inter/wght.css';
 import './style.css';
 
+import { QuickActions, useNavigationOrder } from './Navigation.jsx';
 import { desktop, nativeAction } from './native.mjs';
 import { defaultPrefs, isAdmin } from '../functions/core/model.mjs';
 import {
@@ -46,6 +47,7 @@ import Board from './views/Board.jsx';
 import Directory from './views/Directory.jsx';
 const Admin = lazy(() => import('./views/Admin.jsx')),
   Channels = lazy(() => import('./views/Channels.jsx')),
+  Canvas = lazy(() => import('./views/Canvas.jsx')),
   FigmaResource = lazy(() => import('./views/Figma.jsx')),
   Meetings = lazy(() => import('./views/Meetings.jsx')),
   Eod = lazy(() => import('./views/Eod.jsx')),
@@ -65,6 +67,7 @@ const nav = [
   ['links', 'Apps & links', Link2],
   ['vault', 'Sensitive data', KeyRound],
   ['figma', 'Figma', FigmaIcon],
+  ['whiteboard', 'Whiteboards', LayoutGrid],
   ['meetings', 'Meetings', Phone],
   ['calendar', 'Calendar', CalendarDays],
 ];
@@ -179,13 +182,25 @@ function App() {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setNotice(''), 6000);
   };
+  const navigateOrder = useNavigationOrder(api, tell);
+  const [contributions, setContributions] = useState({}),
+    [unread, setUnread] = useState(0);
+  useEffect(() => api?.watchContributions(setContributions, tell), [api]);
+  useEffect(() => {
+    setUnread(0);
+    return api?.watchUnread(setUnread, tell);
+  }, [api]);
+  useEffect(() => {
+    nativeAction('unread_badge', { count: unread });
+  }, [unread]);
   const connect = (next) => {
     restore.current++;
     localStorage.setItem('monexus.live', '1');
     setChannelId('');
     setSpace({ members: [], boards: [] });
     selectBoard('');
-    setView('boards');
+    const previous = localStorage.getItem('monexus.resource.' + next.uid);
+    setView(nav.some(([k]) => k === previous) ? previous : 'boards');
     requestMeeting(null);
     setApi(next);
     authDialog(false);
@@ -250,7 +265,7 @@ function App() {
     };
   }, [api]);
   const me = space.members.find((m) => m.id === api?.uid),
-    boards = space.boards,
+    boards = navigateOrder.sorted(space.boards, 'Boards', (b) => b.id),
     board = boards.find((b) => b.id === activeBoard) || boards[0];
   useEffect(() => {
     document.documentElement.dataset.theme = prefs.theme;
@@ -308,6 +323,7 @@ function App() {
   );
   const go = (v) => {
       setView(v);
+      if (api) localStorage.setItem('monexus.resource.' + api.uid, v);
       if(v==='eod')setEodDate({day:''});
       setRail(false);
       setJump(null);
@@ -334,7 +350,13 @@ function App() {
       : view === 'admin'
         ? 'Administration'
         : 'Settings');
+  const resources = navigateOrder.sorted(
+    nav.slice(3),
+    'Resources',
+    (r) => r[0],
+  );
   const shared = {
+    contributions,
     api,
     me,
     members: space.members,
@@ -393,6 +415,11 @@ function App() {
               >
                 <I />
                 {n}
+                {k === 'inbox' && unread > 0 && (
+                  <small className="unread-count">
+                    {unread > 99 ? '99+' : unread}
+                  </small>
+                )}
               </button>
             ),
           )}
@@ -415,6 +442,11 @@ function App() {
           {boards.map((b) => (
             <button
               key={b.id}
+              {...navigateOrder.props(
+                'Boards',
+                b.id,
+                boards.map((b) => b.id),
+              )}
               className={
                 'nav-item sub ' +
                 (view === 'boards' && b.id === board?.id ? 'current' : '')
@@ -428,10 +460,15 @@ function App() {
         </div>
         <div className="nav-group">
           <div className="nav-label">Resources</div>
-          {nav.slice(3).map(([k, n, I]) => (
+          {resources.map(([k, n, I]) => (
             <button
               className={'nav-item ' + (view === k ? 'selected' : '')}
               key={k}
+              {...navigateOrder.props(
+                'Resources',
+                k,
+                resources.map((r) => r[0]),
+              )}
               onClick={() => go(k)}
             >
               <I />
@@ -439,6 +476,7 @@ function App() {
             </button>
           ))}
         </div>
+        <QuickActions />
         <div className="side-bottom">
           {isAdmin(me) && (
             <button
@@ -497,6 +535,7 @@ function App() {
         <Suspense fallback={<p className="page">Loading…</p>}>
           {view === 'directory' ? (
             <Directory
+              navigateOrder={navigateOrder}
               {...{ boards, me, choose }}
               create={() => {
                 go('boards');
@@ -526,6 +565,8 @@ function App() {
             <Admin {...shared} navigate={go} />
           ) : view === 'inbox' ? (
             <InboxPage {...shared} open={openNotice} />
+          ) : view === 'whiteboard' ? (
+            <Canvas {...shared} />
           ) : view === 'figma' ? (
             <FigmaResource {...shared} />
           ) : view === 'notes' ? (

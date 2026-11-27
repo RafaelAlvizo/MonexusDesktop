@@ -15,9 +15,14 @@ import {
   useLoad,
   openLink,
 } from '../ui.jsx';
-import { isAdmin, figmaEmbed, newId } from '../../functions/core/model.mjs';
+import {
+  mayContribute,
+  isAdmin,
+  figmaEmbed,
+  newId,
+} from '../../functions/core/model.mjs';
 
-export default function Figma({ api, me }) {
+export default function Figma({ api, me, contributions }) {
   const list = useLoad(() => api.command('figma.list'), [api]),
     job = useJob();
   const [selected, select] = useState(''),
@@ -64,7 +69,7 @@ export default function Figma({ api, me }) {
           <Btn icon={Link2} onClick={() => setForm({ preview: true, url: '' })}>
             Open link
           </Btn>
-          {isAdmin(me) && (
+          {mayContribute(contributions, 'figma', me) && (
             <Btn kind="primary" icon={Plus} onClick={newFile}>
               Add Figma file
             </Btn>

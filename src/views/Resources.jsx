@@ -14,7 +14,12 @@ import {
   ExternalLink,
   Trash2,
 } from 'lucide-react';
-import { isAdmin, newId, aclAllows } from '../../functions/core/model.mjs';
+import {
+  isAdmin,
+  newId,
+  aclAllows,
+  mayContribute,
+} from '../../functions/core/model.mjs';
 import {
   Btn,
   IconButton,
@@ -143,6 +148,10 @@ function Editor({
               <details>
                 <summary>Permissions · {accessSummary(v, api.uid)}</summary>
                 <ViewAccess {...{ api, members }} value={v} change={patch} />
+                <small>
+                  Admins retain access to items they create unless explicitly
+                  excluded.
+                </small>
               </details>
             )}
             <details>
@@ -203,9 +212,23 @@ function Editor({
     </Modal>
   );
 }
-export default function Resources({ api, me, members, area }) {
-  const [scope, setScope] = useState('company'),
-    [folders, path] = useState([]),
+export default function Resources({ api, me, members, area, contributions }) {
+  const [scope, setScope] = useState(() =>
+      sessionStorage.getItem('monexus.links.' + me.id) === 'personal'
+        ? 'personal'
+        : 'company',
+    ),
+    [folders, path] = useState(() => {
+      try {
+        return (
+          JSON.parse(
+            sessionStorage.getItem('monexus.folders.' + me.id + '.' + area),
+          ) || []
+        );
+      } catch {
+        return [];
+      }
+    }),
     [search, find] = useState(''),
     [kind, setKind] = useState('link'),
     [permission, setPermission] = useState(null),
@@ -221,7 +244,28 @@ export default function Resources({ api, me, members, area }) {
       links ? { scope } : { area, folder },
     ),
     canEdit = isAdmin(me) || (links && scope === 'personal'),
-    canUpload = area === 'drive' && aclAllows(folders.at(-1)?.uploadAcl, me);
+    canUpload =
+      mayContribute(
+        contributions,
+        area === 'drive' ? 'drive' : 'docsFiles',
+        me,
+      ) ||
+      (area === 'drive' &&
+        !contributions.drive &&
+        aclAllows(folders.at(-1)?.uploadAcl, me)),
+    canLink = mayContribute(
+      contributions,
+      area === 'drive' ? 'drive' : 'docs',
+      me,
+    );
+  React.useEffect(() => {
+    sessionStorage.setItem(
+      'monexus.folders.' + me.id + '.' + area,
+      JSON.stringify(
+        folders.map(({ id, name, uploadAcl }) => ({ id, name, uploadAcl })),
+      ),
+    );
+  }, [folders, me.id, area]);
   const create = (k) => {
     setKind(k);
     edit(null);
@@ -269,19 +313,23 @@ export default function Resources({ api, me, members, area }) {
           }
           tools={
             <>
-              {(canEdit || canUpload) && (
+              {canUpload && (
                 <Btn kind="primary" icon={Plus} onClick={() => create('file')}>
                   Upload file
                 </Btn>
               )}
-              {canEdit && (
+              {(canLink || canEdit) && (
                 <>
-                  <Btn icon={Folder} onClick={() => create('folder')}>
-                    New folder
-                  </Btn>
-                  <Btn icon={Link2} onClick={() => create('link')}>
-                    New link
-                  </Btn>
+                  {canEdit && (
+                    <Btn icon={Folder} onClick={() => create('folder')}>
+                      New folder
+                    </Btn>
+                  )}
+                  {canLink && (
+                    <Btn icon={Link2} onClick={() => create('link')}>
+                      New link
+                    </Btn>
+                  )}
                 </>
               )}
             </>
@@ -320,7 +368,8 @@ export default function Resources({ api, me, members, area }) {
     <div className="page">
       <div className="page-head">
         <h1>Apps &amp; links</h1>
-        {canEdit && (
+        {(scope === 'personal' ||
+          mayContribute(contributions, 'links', me)) && (
           <Btn kind="primary" icon={Plus} onClick={() => edit(null)}>
             Add link
           </Btn>
@@ -332,7 +381,10 @@ export default function Resources({ api, me, members, area }) {
           ['personal', 'Personal'],
         ]}
         value={scope}
-        onChange={setScope}
+        onChange={(s) => {
+          setScope(s);
+          sessionStorage.setItem('monexus.links.' + me.id, s);
+        }}
       />
       <div className="panel">
         {page.items.map((n) => (

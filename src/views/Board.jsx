@@ -1,3 +1,4 @@
+import { quickMenu } from '../Navigation.jsx';
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import {
   PanelsTopLeft,
@@ -44,6 +45,15 @@ function TicketCard({ t, board, members, open, canMove }) {
     <button
       type="button"
       className="ticket-card"
+      onContextMenu={(e) =>
+        quickMenu(e, [
+          { label: 'Open ticket', run: () => open(t) },
+          {
+            label: 'Copy ticket ID',
+            run: () => navigator.clipboard.writeText(ticketKey(board, t)),
+          },
+        ])
+      }
       draggable={canMove}
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', t.id);
@@ -116,6 +126,7 @@ export default function Board({
   clearJump,
   tell,
 }) {
+  const [backlog, showBacklog] = useState(false);
   const [viewers, setViewers] = useState([]);
   useEffect(
     () => board && api.boardPresence(board.id, setViewers, tell),
@@ -142,11 +153,20 @@ export default function Board({
   }, [newBoard]);
   useEffect(() => {
     if (!board) return;
-    return api.watchBoard(board.id, limit, setTickets, (e) => {
-      setTickets([]);
-      error(humanError(e));
-    });
-  }, [api, board?.id, limit]);
+    setTickets([]);
+    return api.watchBoard(
+      board.id,
+      limit,
+      setTickets,
+      (e) => {
+        setTickets([]);
+        error(humanError(e));
+      },
+      backlog && isAdmin(me)
+        ? ['backlog']
+        : board.columns.filter((c) => c.id !== 'backlog').map((c) => c.id),
+    );
+  }, [api, board?.id, board?.rev, limit, backlog, me?.role]);
   useEffect(() => {
     if (
       board &&
@@ -195,10 +215,26 @@ export default function Board({
   const filtering=!!(priority || person || due || Object.values(fields).some(Boolean));
   const visible = tickets.filter(
     (t) =>
-      Object.entries(fields).every(([key, value]) => !value || (Array.isArray(t.values[key]) ? t.values[key].includes(value) : t.values[key] === value)) &&
+      (t.column === 'backlog') === (backlog && isAdmin(me)) &&
+      Object.entries(fields).every(
+        ([key, value]) =>
+          !value ||
+          (Array.isArray(t.values[key])
+            ? t.values[key].includes(value)
+            : t.values[key] === value),
+      ) &&
       (!priority || t.values.priority === priority) &&
-      (!due || (due === 'unset' ? !t.values.due : t.values.due && (due === 'late' ? t.values.due < day(today) : t.values.due >= day(today) && t.values.due <= day(week)))) &&
-      (!person || (person === '_unassigned' ? !t.values.assignee : t.values.assignee === person)) &&
+      (!due ||
+        (due === 'unset'
+          ? !t.values.due
+          : t.values.due &&
+            (due === 'late'
+              ? t.values.due < day(today)
+              : t.values.due >= day(today) && t.values.due <= day(week)))) &&
+      (!person ||
+        (person === '_unassigned'
+          ? !t.values.assignee
+          : t.values.assignee === person)) &&
       (!search ||
         [
           ticketKey(board, t),
@@ -210,7 +246,16 @@ export default function Board({
           .toLowerCase()
           .includes(search.toLowerCase())),
   );
-  const total = Object.values(board?.counts || {}).reduce((a, b) => a + b, 0),
+  const backlogStage = board?.columns.find((c) => c.id === 'backlog') || {
+    id: 'backlog',
+    name: 'Backlog',
+    color: 'slate',
+  };
+  const stages =
+    backlog && isAdmin(me)
+      ? [backlogStage]
+      : (board?.columns || []).filter((c) => c.id !== 'backlog');
+  const total = stages.reduce((n, c) => n + (board?.counts?.[c.id] || 0), 0),
     people = members.filter((m) => m.active && board?.memberIds.includes(m.id));
   const move = async (e, col) => {
     e.preventDefault();
@@ -266,6 +311,17 @@ export default function Board({
               )}
             </div>
             <div className="board-actions">
+              {isAdmin(me) && (
+                <Btn
+                  aria-pressed={backlog}
+                  onClick={() => {
+                    showBacklog(!backlog);
+                    edit(null);
+                  }}
+                >
+                  {backlog ? 'Return to board' : 'Private backlog'}
+                </Btn>
+              )}
               {role === 'admin' && (
                 <Btn icon={Settings2} onClick={() => setConfig('edit')}>
                   Board settings
@@ -275,7 +331,7 @@ export default function Board({
                 <Btn
                   kind="primary"
                   icon={Plus}
-                  onClick={() => edit({ column: board.columns[0].id })}
+                  onClick={() => edit({ column: stages[0]?.id })}
                 >
                   New ticket
                 </Btn>
@@ -438,7 +494,7 @@ export default function Board({
           <ErrorText error={err} />
           {mode === 'board' ? (
             <div className="kanban">
-              {board.columns.map((col) => {
+              {stages.map((col) => {
                 const items = visible.filter((t) => t.column === col.id);
                 return (
                   <section
@@ -515,9 +571,7 @@ export default function Board({
                           {t.values.title}
                         </button>
                       </td>
-                      <td>
-                        {board.columns.find((c) => c.id === t.column)?.name}
-                      </td>
+                      <td>{stages.find((c) => c.id === t.column)?.name}</td>
                       {board.fields
                         .filter((f) => f.key !== 'title' && f.enabled && f.card)
                         .map((f) => (

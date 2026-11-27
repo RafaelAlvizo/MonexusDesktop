@@ -1,4 +1,4 @@
-import {createPortal} from 'react-dom';
+import { createPortal } from 'react-dom';
 import {
   ChevronDown,
   ChevronRight,
@@ -10,7 +10,9 @@ import {
   Phone,
   CalendarPlus,
 } from 'lucide-react';
-import {saveFile} from '../ui.jsx';
+import { PeoplePicker } from './Sharing.jsx';
+import { PollForm, PollResult, Roster } from './ChatTools.jsx';
+import { saveFile } from '../ui.jsx';
 import React, { useEffect, useState, useRef } from 'react';
 import {
   Plus,
@@ -102,25 +104,14 @@ function ChannelSettings({ api, initial, members, onClose, saved }) {
           Visible to all workspace members
         </Check>
         {!c.everyone && (
-          <Label name="Selected members">
-            <select
-              multiple
-              value={c.users}
-              onChange={(e) =>
-                patch({
-                  users: [...e.target.selectedOptions].map((x) => x.value),
-                })
-              }
-            >
-              {members
-                .filter((m) => m.active)
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-            </select>
-          </Label>
+          <PeoplePicker
+            label="Selected members"
+            options={members
+              .filter((m) => m.active)
+              .sort((a, b) => a.name.localeCompare(b.name))}
+            value={c.users}
+            change={(users) => patch({ users })}
+          />
         )}
         {channelActions.map((k) => (
           <Label key={k} name={'Who can ' + k + '?'}>
@@ -159,63 +150,172 @@ function ChannelSettings({ api, initial, members, onClose, saved }) {
   );
 }
 function MessageBody({ message, members }) {
-  const labels = (message.mentions || []).map(id => members.find(m => m.id === id))
-    .filter(Boolean).map(m => '@' + m.name).sort((a,b) => b.length - a.length);
+  const labels = (message.mentions || [])
+    .map((id) => members.find((m) => m.id === id))
+    .filter(Boolean)
+    .map((m) => '@' + m.name)
+    .sort((a, b) => b.length - a.length);
   const parts = [];
   let offset = 0;
   while (offset < message.body.length) {
-    const matches = labels.map(label => ({label, at:message.body.indexOf(label,offset)}))
-      .filter(match => match.at >= offset).sort((a,b) => a.at - b.at);
+    const matches = labels
+      .map((label) => ({ label, at: message.body.indexOf(label, offset) }))
+      .filter((match) => match.at >= offset)
+      .sort((a, b) => a.at - b.at);
     const next = matches[0];
-    if (!next) {parts.push(message.body.slice(offset));break;}
-    parts.push(message.body.slice(offset,next.at), <mark key={next.at}>{next.label}</mark>);
+    if (!next) {
+      parts.push(message.body.slice(offset));
+      break;
+    }
+    parts.push(
+      message.body.slice(offset, next.at),
+      <mark key={next.at}>{next.label}</mark>,
+    );
     offset = next.at + next.label.length;
   }
-  return <p>{parts.map((part,index) => typeof part === 'string' ?
-    part.split(/(https?:\/\/[^\s<>]+)/g).map((piece,i) => /^https?:\/\//.test(piece)
-      ? <button key={index+'-'+i} className="inline-chat-link" onClick={() => openLink(piece)}>{piece}</button> : piece) : part)}</p>;
+  return (
+    <p>
+      {parts.map((part, index) =>
+        typeof part === 'string'
+          ? part.split(/(https?:\/\/[^\s<>]+)/g).map((piece, i) =>
+              /^https?:\/\//.test(piece) ? (
+                <button
+                  key={index + '-' + i}
+                  className="inline-chat-link"
+                  onClick={() => openLink(piece)}
+                >
+                  {piece}
+                </button>
+              ) : (
+                piece
+              ),
+            )
+          : part,
+      )}
+    </p>
+  );
 }
 
 function PersonIcon({ person, state = 'Offline' }) {
   const Icon = { Online: Tick, Idle: Clock3, 'Do Not Disturb': Minus }[state];
-  return <span className="chat-avatar"><Avatar person={person} small />
-    <span className="presence-icon" data-state={state} role="img" aria-label={state} title={state}>
-      {Icon && <Icon size={9} strokeWidth={3} />}
-    </span></span>;
+  return (
+    <span className="chat-avatar">
+      <Avatar person={person} small />
+      <span
+        className="presence-icon"
+        data-state={state}
+        role="img"
+        aria-label={state}
+        title={state}
+      >
+        {Icon && <Icon size={9} strokeWidth={3} />}
+      </span>
+    </span>
+  );
 }
 
-function Preview({api,file}) {
-  const [url,setUrl] = useState(''), [error,setError] = useState('');
-  const kind = /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(file.mime) ? 'image' :
-    /^video\/(mp4|webm|ogg)$/.test(file.mime) ? 'video' : /^audio\/(mpeg|mp4|ogg|wav|webm)$/.test(file.mime) ? 'audio' : '';
-  const [load,start] = useState(file.size <= 24*1024*1024);
+function Preview({ api, file }) {
+  const [url, setUrl] = useState(''),
+    [error, setError] = useState('');
+  const kind = /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(file.mime)
+    ? 'image'
+    : /^video\/(mp4|webm|ogg)$/.test(file.mime)
+      ? 'video'
+      : /^audio\/(mpeg|mp4|ogg|wav|webm)$/.test(file.mime)
+        ? 'audio'
+        : '';
+  const [load, start] = useState(file.size <= 24 * 1024 * 1024);
   useEffect(() => {
     if (!kind || !load) return;
-    let live=true, object;
-    api.fileBlob(file.id).then(blob => {
-      if (live) {object=URL.createObjectURL(blob.slice(0,blob.size,file.mime));setUrl(object);}
-    }).catch(e => {if(live)setError(e.message);});
-    return () => {live=false;if(object)URL.revokeObjectURL(object);};
-  },[api,file.id,kind,load]);
-  return <div className="chat-preview">
-    {url && (kind === 'image' ? <img src={url} alt={file.name}/> : kind === 'video' ?
-      <video controls preload="metadata" src={url}/> : <audio controls src={url}/>)}
-    {kind && !load && <Btn onClick={() => start(true)}>Preview {file.name}</Btn>}
-    <button className="text-btn" onClick={() => saveFile(api,file.id,file.name).catch(e => setError(e.message))}>{file.name}</button>
-    <ErrorText error={error}/>
-  </div>;
+    let live = true,
+      object;
+    api
+      .fileBlob(file.id)
+      .then((blob) => {
+        if (live) {
+          object = URL.createObjectURL(blob.slice(0, blob.size, file.mime));
+          setUrl(object);
+        }
+      })
+      .catch((e) => {
+        if (live) setError(e.message);
+      });
+    return () => {
+      live = false;
+      if (object) URL.revokeObjectURL(object);
+    };
+  }, [api, file.id, kind, load]);
+  return (
+    <div className="chat-preview">
+      {url &&
+        (kind === 'image' ? (
+          <img src={url} alt={file.name} />
+        ) : kind === 'video' ? (
+          <video controls preload="metadata" src={url} />
+        ) : (
+          <audio controls src={url} />
+        ))}
+      {kind && !load && (
+        <Btn onClick={() => start(true)}>Preview {file.name}</Btn>
+      )}
+      <button
+        className="text-btn"
+        onClick={() =>
+          saveFile(api, file.id, file.name).catch((e) => setError(e.message))
+        }
+      >
+        {file.name}
+      </button>
+      <ErrorText error={error} />
+    </div>
+  );
 }
-function MessageMedia({api,channel,message}) {
-  const files = useLoad(() => api.command('file.list',{scope:{kind:'channel',container:channel,item:message.id}}),
-    [api,channel,message.id,message.mediaVersion]);
-  return <>{(files.data?.items || []).map(file => <Preview key={file.id} {...{api,file}}/>)}
-    {files.loading && <small>Loading attachment…</small>}<ErrorText error={files.error}/></>;
+function MessageMedia({ api, channel, message }) {
+  const files = useLoad(
+    () =>
+      api.command('file.list', {
+        scope: { kind: 'channel', container: channel, item: message.id },
+      }),
+    [api, channel, message.id, message.mediaVersion],
+  );
+  return (
+    <>
+      {(files.data?.items || []).map((file) => (
+        <Preview key={file.id} {...{ api, file }} />
+      ))}
+      {files.loading && <small>Loading attachment…</small>}
+      <ErrorText error={files.error} />
+    </>
+  );
 }
-function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
-  const [recent, setRecent] = useState([]),
+const previews = new WeakMap();
+function recentMessages(api) {
+  if (!previews.has(api)) previews.set(api, new Map());
+  return previews.get(api);
+}
+function Feed({
+  api,
+  ch,
+  me,
+  members,
+  tell,
+  configure,
+  presence,
+  meeting,
+  initialDraft = '',
+  consumeDraft,
+}) {
+  const [recent, setRecent] = useState(
+      () => recentMessages(api).get(ch.id) || [],
+    ),
+    [poll, makePoll] = useState(false),
+    [roster, showRoster] = useState(false),
+    [typing, setTyping] = useState({}),
+    [clock, tick] = useState(Date.now),
+    typingWriter = useRef(null),
     [older, setOlder] = useState([]),
     [end, setEnd] = useState(false),
-    [body, text] = useState(''),
+    [body, text] = useState(initialDraft),
     [tags, setTags] = useState([]),
     [caret, setCaret] = useState(-1),
     [choice, setChoice] = useState(0),
@@ -233,6 +333,7 @@ function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
     composer = useRef(null);
   useEffect(() => {
     composer.current?.focus();
+    consumeDraft?.();
   }, [ch.id]);
   const query =
     caret < 0 ? null : body.slice(0, caret).match(/(?:^|\s)@([^@\s]*)$/u);
@@ -270,6 +371,8 @@ function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
       ),
     );
     text(next);
+    if (next.trim()) typingWriter.current?.update();
+    else typingWriter.current?.clear();
     setChoice(0);
   }
   function tagPerson(person) {
@@ -292,6 +395,19 @@ function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
       el?.setSelectionRange(start + label.length + 1, start + label.length + 1);
     });
   }
+  useEffect(() => {
+    typingWriter.current = api.typing(ch.id);
+    const off = api.watchTyping(ch.id, setTyping, tell);
+    const interval = setInterval(() => tick(Date.now()), 1200);
+    return () => {
+      off();
+      clearInterval(interval);
+      typingWriter.current.clear();
+    };
+  }, [api, ch.id]);
+  const typingNames = members
+    .filter((m) => m.id !== me.id && typing[m.id] > clock - 6000)
+    .map((m) => m.name);
   const latest = recent[recent.length - 1]?.id;
   useEffect(() => {
     if (follow.current && stream.current)
@@ -299,11 +415,20 @@ function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
   }, [latest]);
   const [pinLimit, setPinLimit] = useState(50);
   useEffect(() => {
-    setRecent([]);
+    setRecent(pinned ? [] : recentMessages(api).get(ch.id) || []);
     return api.watchMessages(
       ch.id,
-      setRecent,
+      (rows) => {
+        if (!pinned) {
+          const cache = recentMessages(api);
+          cache.delete(ch.id);
+          cache.set(ch.id, rows);
+          if (cache.size > 20) cache.delete(cache.keys().next().value);
+        }
+        setRecent(rows);
+      },
       (e) => {
+        recentMessages(api).delete(ch.id);
         setRecent([]);
         setOlder([]);
         tell(e);
@@ -311,6 +436,25 @@ function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
       { pinned, limit: pinLimit },
     );
   }, [api, ch.id, pinned, pinLimit]);
+  const prefetched = useRef(false);
+  useEffect(() => {
+    if (pinned || prefetched.current || recent.length < 50) return;
+    let live = true;
+    const first = recent[0];
+    api
+      .command('channel.older', { channel: ch.id, id: first.id, at: first.at })
+      .then((rows) => {
+        if (live) {
+          prefetched.current = true;
+          setOlder(rows);
+          setEnd(rows.length < 50);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [ch.id, pinned, recent[0]?.id]);
   const olderIds = older.map((m) => m.id).join(',');
   useEffect(() => {
     if (!olderIds) return;
@@ -352,6 +496,7 @@ function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
         mentions: [...new Set(tags.map((t) => t.id))],
         hasMedia: !!file,
       });
+      typingWriter.current?.clear();
       follow.current = true;
       text((current) => (current === body ? '' : current));
       composer.current?.focus();
@@ -381,6 +526,11 @@ function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
           {ch.name}
         </h2>
         <div className="row wrap">
+          <IconButton
+            label="Channel members"
+            icon={UsersRound}
+            onClick={() => showRoster(true)}
+          />
           <Btn icon={Phone} onClick={() => meeting(ch, 'now')}>
             Call
           </Btn>
@@ -505,6 +655,22 @@ function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
                         </button>
                       )}
                       {m.body && <MessageBody message={m} members={members} />}
+                      {m.poll && (
+                        <PollResult
+                          poll={m.poll}
+                          me={me}
+                          enabled={channelAllows(ch, me, 'react')}
+                          vote={(choice) =>
+                            job.run(() =>
+                              api.command('channel.vote', {
+                                channel: ch.id,
+                                id: m.id,
+                                choice,
+                              }),
+                            )
+                          }
+                        />
+                      )}
                       {m.hasMedia && (
                         <MessageMedia api={api} channel={ch.id} message={m} />
                       )}
@@ -698,7 +864,14 @@ function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
               setCaret(e.target.selectionStart);
             }}
           />
+          <small role="status" className="typing-indicator">
+            {typingNames.length
+              ? typingNames.join(', ') +
+                (typingNames.length === 1 ? ' is typing…' : ' are typing…')
+              : ''}
+          </small>
           <div className="row wrap composer-tools">
+            <Btn onClick={() => makePoll(true)}>Poll</Btn>
             <label className="btn compact">
               <Paperclip size={14} />
               {file ? file.name : 'Attach'}
@@ -719,6 +892,29 @@ function Feed({ api, ch, me, members, tell, configure, presence, meeting }) {
             </Btn>
           </div>
         </div>
+      )}
+      {roster && (
+        <Roster
+          members={members.filter(
+            (m) => m.active && (ch.everyone || ch.users?.[m.id]),
+          )}
+          presence={presence}
+          close={() => showRoster(false)}
+        />
+      )}
+      {poll && (
+        <PollForm
+          close={() => makePoll(false)}
+          submit={async (body, options) => {
+            await api.command('channel.post', {
+              id: newId('msg'),
+              channel: ch.id,
+              body,
+              options,
+            });
+            makePoll(false);
+          }}
+        />
       )}
       {editing && (
         <Modal title="Edit message" onClose={() => setEditing(null)}>
@@ -865,11 +1061,13 @@ export default function Channels({
       live = false;
       window.removeEventListener('focus', reload);
     };
-  }, [api, generation, selected]);
+  }, [api, generation]);
   const raw =
     list.find((c) => c.id === selected) ||
     (direct?.id === selected ? direct : null) ||
-    list.find((c) => c.kind !== 'direct');
+    (selected?.startsWith('pending_')
+      ? null
+      : list.find((c) => c.kind !== 'direct'));
   const peerId =
     raw?.kind === 'direct'
       ? Object.keys(raw.users).find((uid) => uid !== me?.id)
@@ -884,11 +1082,23 @@ export default function Channels({
   );
   const visible = list.filter((c) => c.kind !== 'direct' && matches(c.name));
   useEffect(() => api.watchPresence(setPresence, tell), [api]);
+  const drafts = useRef({}),
+    openRequest = useRef(0);
   function openDirect(target) {
+    const request = ++openRequest.current;
+    const existing =
+      list.find((c) => c.kind === 'direct' && c.users?.[target]) ||
+      (direct?.users?.[target] ? direct : null);
+    if (existing) {
+      onSelect(existing.id);
+      return;
+    }
+    onSelect('pending_' + target);
     job.run(async () => {
       const c = await api.command('channel.direct', { target });
       setDirect(c);
-      onSelect(c.id);
+      setList((old) => (old.some((x) => x.id === c.id) ? old : [...old, c]));
+      if (request === openRequest.current) onSelect(c.id);
     });
   }
   const [expanded, expand] = useState(false),
@@ -931,7 +1141,7 @@ export default function Channels({
     const ids = items.map((x) => x.id),
       target = index + offset;
     if (target < 0 || target >= ids.length) return;
-    [ids[index], ids[target]] = [ids[target], ids[index]];
+    ids.splice(target, 0, ids.splice(index, 1)[0]);
     const next = { ...order, [group]: ids };
     localStorage.setItem(storageKey, JSON.stringify(next));
     setOrder(next);
@@ -949,7 +1159,29 @@ export default function Channels({
       <>
         <h4>{group}</h4>
         {rows.map((item, i) => (
-          <div className="conversation-row" key={item.id}>
+          <div
+            className="conversation-row"
+            key={item.id}
+            draggable={orderReady && !query}
+            onDragStart={(e) =>
+              e.dataTransfer.setData(
+                'monexus/chat',
+                JSON.stringify([group, item.id]),
+              )
+            }
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes('monexus/chat'))
+                e.preventDefault();
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const data = e.dataTransfer.getData('monexus/chat');
+              if (!data) return;
+              const [g, id] = JSON.parse(data);
+              const from = rows.findIndex((x) => x.id === id);
+              if (g === group && from >= 0) shift(rows, group, from, i - from);
+            }}
+          >
             <button
               className={
                 'nav-item sub ' +
@@ -958,7 +1190,13 @@ export default function Channels({
                   : '')
               }
               disabled={dm && job.busy}
-              onClick={() => (dm ? openDirect(item.id) : onSelect(item.id))}
+              onClick={() => {
+                if (dm) openDirect(item.id);
+                else {
+                  openRequest.current++;
+                  onSelect(item.id);
+                }
+              }}
             >
               {dm ? (
                 <PersonIcon person={item} state={presence[item.id]} />
@@ -1049,8 +1287,25 @@ export default function Channels({
               <Feed
                 key={ch.id}
                 {...{ api, ch, me, members, tell, presence, meeting }}
+                initialDraft={drafts.current[peerId] || ''}
+                consumeDraft={() => delete drafts.current[peerId]}
                 configure={isAdmin(me) && !peerId ? () => setEdit(ch) : null}
               />
+            ) : selected?.startsWith('pending_') ? (
+              <div className="feed">
+                <h2>{members.find((m) => m.id === selected.slice(8))?.name}</h2>
+                <div className="feed-posts" aria-busy="true" />
+                <div className="composer">
+                  <textarea
+                    autoFocus
+                    aria-label="Message"
+                    placeholder="Write a message…"
+                    onChange={(e) => {
+                      drafts.current[selected.slice(8)] = e.target.value;
+                    }}
+                  />
+                </div>
+              </div>
             ) : (
               <Empty>Choose a channel or teammate in the sidebar.</Empty>
             )}

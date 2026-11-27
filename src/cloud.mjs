@@ -149,6 +149,7 @@ async function getWorkspace(user) {
   return {
     uid,
     command,
+    mcpUrl: endpoint + 'assistantMcp',
     async logout() {
       let timer;
       try {
@@ -318,14 +319,53 @@ async function getWorkspace(user) {
         cb(snap.val() || 0),
       );
     },
-    watchBoard(board, count, cb, fail) {
+    watchBoard(board, count, cb, fail, stages) {
+      const base = f.collection(db, 'boards', board, 'tickets');
+      const groupIds = [];
+      for (let i = 0; i < stages.length; i += 30)
+        groupIds.push(stages.slice(i, i + 30));
+      const results = groupIds.map(() => []);
+      if (!groupIds.length) {
+        cb([]);
+        return () => {};
+      }
+      const subs = groupIds.map((ids, index) =>
+        f.onSnapshot(
+          f.query(
+            base,
+            f.where('column', 'in', ids),
+            f.orderBy('seq', 'desc'),
+            f.limit(count),
+          ),
+          (snap) => {
+            results[index] = snap.docs.map((d) => d.data());
+            cb(
+              results
+                .flat()
+                .sort((a, b) => b.seq - a.seq)
+                .slice(0, count),
+            );
+          },
+          fail,
+        ),
+      );
+      return () => subs.forEach((off) => off());
+    },
+    watchContributions(cb, fail) {
+      return f.onSnapshot(
+        f.doc(db, 'config', 'contributions'),
+        (s) => cb(s.data() || {}),
+        fail,
+      );
+    },
+    watchUnread(cb, fail) {
       return f.onSnapshot(
         f.query(
-          f.collection(db, 'boards', board, 'tickets'),
-          f.orderBy('seq', 'desc'),
-          f.limit(count),
+          f.collection(db, 'members', uid, 'inbox'),
+          f.where('read', '==', false),
+          f.limit(100),
         ),
-        (s) => cb(s.docs.map((d) => d.data())),
+        (snap) => cb(snap.size),
         fail,
       );
     },
@@ -357,6 +397,38 @@ async function getWorkspace(user) {
         (s) => cb(s.val()),
         fail,
       );
+    },
+    watchTyping(key, cb, fail) {
+      return r.onValue(
+        r.ref(rt, 'typing/' + key),
+        (s) => cb(s.val() || {}),
+        fail,
+      );
+    },
+    typing(key) {
+      const ref = r.ref(rt, 'typing/' + key + '/' + uid);
+      const disconnect = r.onDisconnect(ref);
+      let last = 0,
+        timer;
+      function clear() {
+        clearTimeout(timer);
+        last = 0;
+        return r.remove(ref).catch(() => {});
+      }
+      return {
+        update() {
+          if (Date.now() - last > 1800) {
+            last = Date.now();
+            disconnect
+              .remove()
+              .then(() => r.set(ref, r.serverTimestamp()))
+              .catch(() => {});
+          }
+          clearTimeout(timer);
+          timer = setTimeout(clear, 3500);
+        },
+        clear,
+      };
     },
     watchPresence(cb, fail) {
       return r.onValue(
