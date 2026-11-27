@@ -36,7 +36,7 @@ if ($releaseVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid release versio
 $versionSource = Join-Path $output ('version-' + [guid]::NewGuid().ToString('N') + '.cs')
 [IO.File]::WriteAllText($versionSource, ('internal static class BuildVersion { public const string Value = "' + $releaseVersion + '"; }'))
 $hostArgs = @("/out:$stage\Monexus.exe",$versionSource,"/r:$stage\Microsoft.Web.WebView2.Core.dll","/r:$stage\Microsoft.Web.WebView2.WinForms.dll",'/r:System.Web.Extensions.dll',"/r:$framework\System.Runtime.WindowsRuntime.dll","/r:$($facade.FullName)","/r:$winmd\Windows.Foundation.winmd","/r:$winmd\Windows.UI.winmd","/r:$winmd\Windows.Data.winmd","$rootPath\desktop\Host.cs")
-& $compiler @baseArgs @hostArgs (Join-Path $rootPath 'desktop\InstallPaths.cs')
+& $compiler @baseArgs @hostArgs (Join-Path $rootPath 'desktop\InstallPaths.cs') (Join-Path $rootPath 'desktop\PresenterControls.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Windows host compilation failed.' }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $payload = Join-Path $output ('payload-' + [guid]::NewGuid().ToString('N') + '.zip')

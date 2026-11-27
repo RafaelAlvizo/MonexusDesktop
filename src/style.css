@@ -1827,3 +1827,12 @@ button.roster-row:hover { background: var(--lane); }
 .attachment-reader img,.attachment-reader canvas { display: block; max-width: 100%; height: auto; margin: auto; }
 .attachment-reader pre { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); line-height: 1.6; }
 .reader-pages { position: sticky; top: 0; display: flex; align-items: center; justify-content: center; gap: 12px; background: var(--paper); padding: 4px; }
+
+.presence-icon[data-state="In a meeting"] {background:#6554ab;width:15px;height:15px;}
+.meeting-invite { display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:start;
+  width:min(430px,calc(100vw - 32px));box-sizing:border-box;bottom:22px;right:16px;padding:24px;
+  border:1px solid var(--line);border-top:4px solid var(--accent);border-radius:14px;box-shadow:0 15px 52px #0005; }
+.invite-phone {width:48px;height:48px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:var(--paper);}
+.meeting-invite small {font-size:13px;font-weight:600;color:var(--accent);}
+.meeting-invite h3 {font-size:21px;line-height:1.25;margin:6px 0 4px;overflow-wrap:anywhere;}
+.meeting-invite p {margin:0 0 16px;color:var(--muted);}

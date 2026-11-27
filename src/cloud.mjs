@@ -466,7 +466,9 @@ async function getWorkspace(user) {
             const v = Object.values(m.val()).map((s) =>
               s.state === 'Idle' ? 'Online' : s.state,
             );
-            map[m.key] =
+            const attending = Object.entries(m.val()).some(([key, value]) =>
+              key.startsWith('meeting-') && value.state !== 'Offline');
+            map[m.key] = attending ? 'In a meeting' :
               ['Do Not Disturb', 'Online', 'Idle'].find((k) => v.includes(k)) ||
               'Offline';
           });
@@ -509,8 +511,8 @@ async function getWorkspace(user) {
         off();
       };
     },
-    presence(mode, onState, onError) {
-      const session = r.ref(rt, 'presence/' + uid + '/' + crypto.randomUUID()),
+    presence(mode, onState, onError, inMeeting = false) {
+      const session = r.ref(rt, 'presence/' + uid + '/' + (inMeeting ? 'meeting-' : '') + crypto.randomUUID()),
         disc = r.onDisconnect(session);
       let connected = false,
         closed = false,

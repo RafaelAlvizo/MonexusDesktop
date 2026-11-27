@@ -87,7 +87,7 @@ export function Roster({ members, presence, close, onProfile }) {
           value={query}
           onChange={(e) => set(e.target.value)}
         />
-        {['Online', 'Idle', 'Do Not Disturb', 'Offline'].map((state) => {
+        {['In a meeting', 'Online', 'Idle', 'Do Not Disturb', 'Offline'].map((state) => {
           const rows = members
             .filter(
               (m) =>

@@ -22,6 +22,7 @@ import {
 import { newId } from '../../functions/core/model.mjs';
 import { desktop, nativeAction, reserveCallWindow } from '../native.mjs';
 import Call from './Call.jsx';
+import { meetingSoundEnabled, ringMeeting } from '../meetingAudio.mjs';
 
 const minute = 60000,
   dayKey = (d) =>
@@ -326,6 +327,7 @@ export default function Meetings({
   request,
   reminders = true,
   callRoom = '',
+  onAttendance,
 }) {
   const [rooms, setRooms] = useState([]),
     [now, setNow] = useState(Date.now()),
@@ -333,6 +335,7 @@ export default function Meetings({
     [plan, setPlan] = useState(null),
     [call, setCall] = useState(null),
     [invite, setInvite] = useState(null),
+    [listing, setListing] = useState('Upcoming'),
     [error, fail] = useState('');
   const offset = useRef(0),
     job = useJob(),
@@ -378,7 +381,7 @@ export default function Meetings({
     if (m.ended) return next;
     return Math.min(
       next,
-      ...[m.start - 5 * minute, m.start, m.end].filter((at) => at > now),
+      ...[m.start - 5 * minute, m.start, m.instant ? m.start + minute : 0, m.end].filter((at) => at > now),
     );
   }, Infinity);
   useEffect(() => {
@@ -397,13 +400,14 @@ export default function Meetings({
   const seen = (id, phase) =>
     'monexus.meeting.' + me.id + '.' + id + '.' + phase;
   useEffect(() => {
-    if (!reminders) return;
+    if (!reminders || ['Do Not Disturb', 'Offline'].includes(prefs.presence)) return;
     for (const m of rooms) {
       if (m.ended || now >= m.end || (m.instant && m.host === me.id)) continue;
       const remaining = m.start - now;
       if (remaining > 5 * minute) continue;
       const phase = remaining > 0 ? 'soon' : 'open',
         key = seen(m.id, phase);
+      if (m.instant && now - m.start > minute) continue;
       if (localStorage.getItem(key)) continue;
       if (phase === 'open' && (call || invite)) continue;
       localStorage.setItem(key, '1');
@@ -411,7 +415,7 @@ export default function Meetings({
       const title =
         phase === 'soon'
           ? 'Meeting in ' + minutes + (minutes === 1 ? ' minute' : ' minutes')
-          : 'Meeting open now';
+          : m.instant ? 'Incoming meeting call' : 'Meeting open now';
       if (
         desktop &&
         prefs.presence !== 'Do Not Disturb' &&
@@ -421,11 +425,12 @@ export default function Meetings({
           title,
           body: m.title,
           banner: prefs.banners !== false,
-          sound: !!prefs.sound,
+          foregroundHandled: phase === 'open',
+          sound: !m.instant && !!prefs.sound,
         });
       if (phase === 'open') {
         setInvite(m.id);
-        if (desktop && prefs.presence === 'Online') nativeAction('restore');
+        if (desktop && prefs.banners !== false && prefs.presence === 'Online') nativeAction('restore');
         break;
       } else if (!desktop) tell(title + ' · ' + m.title);
     }
@@ -463,11 +468,18 @@ export default function Meetings({
   }
   const room = call && (rooms.find((x) => x.id === call.id) || call.room);
   const incoming = rooms.find(
-    (x) => x.id === invite && !x.ended && x.end > now,
+    (x) => x.id === invite && !x.ended && x.end > now && (!x.instant || x.start + minute > now),
   );
-  const agenda = rooms.filter((x) =>
-    hub ? !x.ended && x.start > now : dayKey(new Date(x.start)) === day,
-  );
+  const audible = meetingSoundEnabled(me.id, 'ringtone') && !['Offline', 'Do Not Disturb'].includes(prefs.presence);
+  useEffect(() => {
+    if (!incoming?.instant || !audible || call || !window.AudioContext) return;
+    const duration = Math.min(30000, incoming.start + minute - Date.now() - offset.current);
+    if (duration > 0) return ringMeeting(duration);
+  }, [incoming?.id, audible, call]);
+  const history = hub && listing === 'History';
+  const upcoming = rooms.filter(x => !x.ended && x.end > now);
+  const agenda = history ? rooms.filter(x => x.ended || x.end <= now).reverse() :
+    upcoming.filter(x => hub ? x.start > now : dayKey(new Date(x.start)) === day);
   const current = rooms.filter(
     (x) => !x.ended && x.start <= now && x.end > now,
   );
@@ -511,7 +523,8 @@ export default function Meetings({
               </Btn>
             </div>
           </div>
-          {current.length > 0 && (
+          {hub && <Tabs values={['Upcoming', 'History']} value={listing} onChange={setListing} />}
+          {!history && current.length > 0 && (
             <div className="live-meetings">
               <b>Open now</b>
               {current.map((m) => (
@@ -523,11 +536,11 @@ export default function Meetings({
             </div>
           )}
           <div className={hub ? undefined : 'calendar-columns'}>
-            {!hub && <Month day={day} select={select} rooms={rooms} />}
+            {!hub && <Month day={day} select={select} rooms={upcoming} />}
             <section className="agenda-panel">
               <h2>
                 {hub
-                  ? 'Upcoming meetings'
+                  ? history ? 'Meeting history' : 'Upcoming meetings'
                   : new Date(day + 'T12:00').toLocaleDateString(undefined, {
                       weekday: 'long',
                       month: 'long',
@@ -567,7 +580,7 @@ export default function Meetings({
               {!agenda.length && (
                 <div className="resource-empty">
                   <CalendarDays />
-                  <h3>No meetings scheduled</h3>
+                  <h3>{history ? 'No past meetings' : 'No meetings scheduled'}</h3>
                 </div>
               )}
             </section>
@@ -590,18 +603,19 @@ export default function Meetings({
           }}
         />
       )}
-      {incoming &&
+      {incoming && prefs.banners !== false && !['Offline', 'Do Not Disturb'].includes(prefs.presence) &&
         !call &&
         createPortal(
           <div
             className="meeting-invite"
             role="alertdialog"
-            aria-label="Meeting open now"
+            aria-label={incoming.instant ? 'Incoming meeting call' : 'Meeting open now'}
           >
-            <Phone size={24} />
+            <span className="invite-phone"><Phone size={27} /></span>
             <div>
-              <small>Meeting open now</small>
+              <small>{incoming.instant ? 'Incoming meeting call' : 'Meeting open now'}</small>
               <h3>{incoming.title}</h3>
+              <p>{members.find(person => person.id === incoming.host)?.name || 'A team member'} {incoming.instant ? 'is calling you.' : 'is hosting.'}</p>
               <div className="row">
                 {joinButton(incoming)}
                 <Btn onClick={() => setInvite(null)}>Decline for now</Btn>
@@ -614,7 +628,7 @@ export default function Meetings({
       {call && (
         <Call
           key={call.session}
-          {...{ api, me, members, now }}
+          {...{ api, me, members, now, onAttendance }}
           m={room}
           entry={call}
           exit={(msg) => {

@@ -4,6 +4,7 @@ import {
   profileImage,
 } from './ConnectionSettings.jsx';
 import React, { useState } from 'react';
+import { meetingSoundEnabled, setMeetingSound } from '../meetingAudio.mjs';
 import { Btn, Label, Check, Tabs, ErrorText, useJob } from '../ui.jsx';
 import {
   events,
@@ -80,11 +81,13 @@ export default function Preferences({
     }),
     [photo, setPhoto] = useState(me?.photo || ''),
     [name, setName] = useState(me?.name || ''),
+    [ringtone, setRingtone] = useState(() => meetingSoundEnabled(me.id, 'ringtone')),
     job = useJob(),
     patch = (o) => set({ ...p, ...o });
   const save = () =>
     job.run(async () => {
       await api.command('profile.save', { name, prefs: p, photo });
+      setMeetingSound(me.id, 'ringtone', ringtone);
       onPrefs(p);
       tell('Settings saved.');
     });
@@ -204,6 +207,9 @@ export default function Preferences({
             onChange={(e) => patch({ sound: e.target.checked })}
           >
             Play notification sounds
+          </Check>
+          <Check checked={ringtone} onChange={e => setRingtone(e.target.checked)}>
+            Ring for incoming meeting calls on this device
           </Check>
           <div className="form-grid">
             <Label name="Banner color">

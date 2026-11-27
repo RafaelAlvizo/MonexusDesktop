@@ -30,19 +30,16 @@
 .call-tile::after { content:''; position:absolute; z-index:2; inset:0; border-radius:inherit; box-shadow:inset 0 0 0 2px transparent; pointer-events:none; }
 .call-tile.speaking::after { box-shadow:inset 0 0 0 2px #83d7a7; }
 .call-tiles[data-count="1"] .call-tile { flex:1; aspect-ratio:auto; background:#141619; }
-.call-tiles[data-sharing] .call-tile[data-source="screen"] {grid-column:1/-1; order:-1; max-height:56vh;}
 .call-tile > video,.camera-preview video { width:100%; height:100%; object-fit:cover; position:absolute; inset:0; }
 .call-tile[data-source="screen"] > video,.call-tiles[data-count="1"] .call-tile > video { object-fit:contain; }
 [data-mirror=true] > video { transform:scaleX(-1); }
 .call-tile > .avatar,.camera-preview > .avatar { width:clamp(42px,7vw,84px); height:auto; aspect-ratio:1; border-radius:22%; font-size:clamp(18px,3vw,33px); }
-.tile-name,.tile-share { position:absolute; z-index:1; left:10px; display:flex; align-items:center; gap:6px;
+.tile-name { position:absolute; z-index:1; left:10px; display:flex; align-items:center; gap:6px;
   max-width:calc(100% - 20px); padding:4px 7px; border-radius:5px; color:#fff; background:#0b0c0ddc; }
 .tile-name {bottom:9px;}.tile-name strong {font-size:12px; font-weight:550; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;}
 .tile-name svg { flex:none; color:#d8dce1; }.tile-name svg[aria-label=Muted] {color:#ff9299;}
 .speaking .tile-name svg { color:var(--call-green); }
 .tile-status { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
-.tile-share {top:9px;color:var(--call-green);font-size:11px;}
-.call-tile audio {display:none;}.call-tile .btn {position:absolute;top:8px;right:8px;}
 .call-controls { min-height:69px; justify-content:space-between; position:relative; border-top:1px solid #2b2d32; background:#161719; gap:8px; }
 .device-tools,.split-tool,.meeting-tools {display:flex;align-items:center;gap:3px;}.device-tools { gap:10px; }
 .meeting-tools {position:absolute;left:50%;transform:translateX(-50%);gap:9px;}
@@ -94,3 +91,27 @@
   .call-tiles:not([data-count="1"]):not([data-sharing]) {grid-template-columns:repeat(2,minmax(0,1fr));--columns:2;--lines:var(--narrow-rows);}
   .call-tiles[data-count="2"]:not([data-sharing]) { grid-template-columns:1fr;--columns:1;--lines:2; }
 }
+
+.call-main { grid-template-rows:minmax(0,1fr); }
+.meeting-stage.presenting { overflow:hidden; gap:6px; padding:6px 10px 8px; }
+.call-tiles[data-sharing] {
+  --thumb-height:clamp(50px,14cqh,112px);
+  display:flex; flex:0 0 auto; align-items:center; gap:6px; width:fit-content; max-width:100%;
+  min-height:0; margin:0 auto; padding:2px; overflow-x:auto; scrollbar-width:thin;
+}
+.call-tiles[data-sharing] .call-tile {
+  width:clamp(85px,calc((100cqw - 4px - (var(--people) - 1) * 6px) / var(--people)),var(--thumb-height) * 16 / 9);
+  height:auto;aspect-ratio:16/9;max-height:none;flex:0 0 auto;
+  border-radius:6px; background:#202329;
+}
+.call-tiles[data-sharing] .avatar {width:clamp(27px,6cqh,51px);font-size:clamp(13px,2.5cqh,20px);}
+.call-tiles[data-sharing] .tile-name {bottom:3px;left:3px;padding:2px 4px;gap:3px;}
+.call-tiles[data-sharing] .tile-name strong {font-size:10px;}
+.call-tiles[data-sharing] .tile-name svg {width:11px;height:11px;}
+.shared-content {display:flex;flex:1;min-height:0;min-width:0;flex-direction:column;align-items:stretch;gap:3px;}
+.share-sources {display:flex;gap:4px;align-items:center;justify-content:center;overflow-x:auto;flex:none;min-height:20px;}
+.share-sources span,.share-sources button {display:flex;align-items:center;gap:5px;color:#b7c8bf;font-weight:500;}
+.share-sources span {font-size:11px;}.share-sources button {background:#25292c;border:0;border-radius:4px;padding:3px 8px;font:inherit;font-size:12px;white-space:nowrap;}
+.share-sources button[aria-pressed=true] {color:var(--call-green);background:#283c31;}
+.shared-content .presentation-video {width:100%;flex:1;min-height:0;max-height:none;aspect-ratio:auto;background:#101214;border-radius:0;}
+.presentation-video > video {object-fit:contain;}

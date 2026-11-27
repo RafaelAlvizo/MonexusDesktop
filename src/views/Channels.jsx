@@ -10,6 +10,7 @@ import {
   Trash2,
   Pencil,
   Phone,
+  Video,
   CalendarPlus,
 } from 'lucide-react';
 import { PeoplePicker } from './Sharing.jsx';
@@ -199,7 +200,7 @@ function MessageBody({ message, members }) {
 }
 
 function PersonIcon({ person, state = 'Offline' }) {
-  const Icon = { Online: Tick, Idle: Clock3, 'Do Not Disturb': Minus }[state];
+  const Icon = { Online: Tick, Idle: Clock3, 'Do Not Disturb': Minus, 'In a meeting': Video }[state];
   return (
     <span className="chat-avatar">
       <Avatar person={person} small />

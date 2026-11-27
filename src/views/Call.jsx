@@ -6,49 +6,59 @@ import { voiceRoom } from '../voice.mjs';
 import { callVideo } from '../callVideo.mjs';
 import { prepareBackground, processCamera } from '../cameraEffects.mjs';
 import '../call.css';
+import { meetingSoundEnabled, setMeetingSound } from '../meetingAudio.mjs';
 import { desktop, nativeAction } from '../native.mjs';
 
-function Media({ stream, video = false, muted = false, volume = 1 }) {
-  const ref = useRef(),
-    [blocked, block] = useState(false);
-  const track = video ? stream?.getVideoTracks()[0] : stream?.getAudioTracks()[0];
-  useEffect(() => { if (ref.current) ref.current.volume = volume; }, [volume]);
+function Media({ stream }) {
+  const ref = useRef();
+  const track = stream?.getVideoTracks()[0];
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
     el.srcObject = track ? new MediaStream([track]) : null;
-    if (track)
-      el.play()
-        .then(() => block(false))
-        .catch(() => block(true));
-    return () => {
-      el.srcObject = null;
-    };
+    if (track) el.play().catch(() => {});
+    return () => { el.srcObject = null; };
   }, [track]);
-  return (
-    <>
-      {video ? (
-        <video ref={ref} muted={muted} autoPlay playsInline />
-      ) : (
-        <audio ref={ref} autoPlay />
-      )}
-      {blocked && !video && (
-        <Btn
-          icon={Volume2}
-          onClick={() =>
-            ref.current
-              .play()
-              .then(() => block(false))
-              .catch(() => {})
-          }
-        >
-          Enable audio
-        </Btn>
-      )}
-    </>
-  );
+  return <video ref={ref} muted autoPlay playsInline />;
 }
-function Participant({ person, name, self, stream, visual, source, muted, state, context, volume, mirror }) {
+
+function RoomAudio({ remote, volume }) {
+  const players = useRef(new Map());
+  const [blocked, setBlocked] = useState(false);
+  useEffect(() => {
+    const current = players.current;
+    let live = true;
+    for (const [id, audio] of current) {
+      if (audio.srcObject?.getAudioTracks()[0] !== remote[id]?.getAudioTracks()[0]) {
+        audio.pause(); audio.srcObject = null; current.delete(id);
+      }
+    }
+    for (const [id, stream] of Object.entries(remote)) {
+      const track = stream?.getAudioTracks()[0];
+      if (!track || current.has(id)) continue;
+      const audio = new Audio();
+      audio.srcObject = new MediaStream([track]);
+      current.set(id, audio);
+    }
+    function play() {
+      const attempts = [...current.values()].map(audio => {
+        audio.volume = volume;
+        return audio.paused ? audio.play() : Promise.resolve();
+      });
+      Promise.allSettled(attempts).then(results => {
+        if (live) setBlocked(results.some(r => r.status === 'rejected' && r.reason?.name === 'NotAllowedError'));
+      });
+    }
+    play();
+    document.addEventListener('click', play);
+    return () => { live = false; document.removeEventListener('click', play); };
+  }, [remote, volume]);
+  useEffect(() => () => {
+    players.current.forEach(audio => { audio.pause(); audio.srcObject = null; });
+    players.current.clear();
+  }, []);
+  return blocked && <Btn icon={Volume2}>Listen to meeting</Btn>;
+}
+function Participant({ person, name, self, stream, visual, source, muted, state, context, mirror }) {
   const [speaking, setSpeaking] = useState(false);
   const track = stream?.getAudioTracks()[0];
   useEffect(() => {
@@ -72,15 +82,13 @@ function Participant({ person, name, self, stream, visual, source, muted, state,
   const talking = speaking && !muted;
   return <div className={'call-tile' + (talking ? ' speaking' : '')} data-source={source || 'off'}
     data-mirror={self && source === 'camera' && mirror || undefined}>
-    {visual && source ? <Media stream={visual} video muted /> : <Avatar person={person} />}
-    {source === 'screen' && <small className="tile-share"><MonitorUp size={14}/> Sharing screen</small>}
+    {visual && source ? <Media stream={visual} /> : <Avatar person={person} />}
     <div className="tile-name">
       {muted ? <MicOff size={14} aria-label="Muted"/> : <Mic size={14} aria-label="Microphone on"/>}
       <strong>{name}{self ? ' (you)' : ''}</strong>
       <small className="tile-status">{talking ? 'Speaking' : muted ? 'Muted' : self || state === 'connected' ? 'Listening' :
         state === 'failed' ? 'Reconnecting' : 'Connecting'}</small>
     </div>
-    {!self && stream && <Media stream={stream} volume={volume} />}
   </div>;
 }
 function Tool({ icon: Icon, label, children, tone = '', ...props }) {
@@ -95,7 +103,7 @@ function cameraPreferences(uid) {
     return { mirror: saved.mirror === true, image, mode: saved.mode === 'blur' || (image && saved.mode === 'image') ? saved.mode : 'none' };
   } catch { return { mirror:false, mode:'none', image:'' }; }
 }
-export default function Call({ api, me, members, m, entry, exit, now }) {
+export default function Call({ api, me, members, m, entry, exit, now, onAttendance }) {
   const [rows, setRows] = useState([]),
     [remote, setRemote] = useState({}),
     [states, setStates] = useState({}),
@@ -110,6 +118,9 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
     [devices, setDevices] = useState([]),
     [volume, setVolume] = useState(1),
     [context, setContext] = useState(null);
+  const [noise, setNoise] = useState(() => meetingSoundEnabled(me.id, 'noise'));
+  const supportsNoise = !!navigator.mediaDevices?.getSupportedConstraints?.().noiseSuppression;
+  const [selectedShare, selectShare] = useState('');
   const media = useRef(null),
     voice = useRef(null),
     video = useRef(null),
@@ -174,6 +185,11 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
     };
   }, [session]);
   const admitted = (self?.status || entry.status) === 'admitted';
+  const attending = admitted && !m.ended && m.end > now;
+  useEffect(() => {
+    onAttendance(attending);
+    return () => onAttendance(false);
+  }, [attending, onAttendance]);
   useEffect(() => {
     if (!admitted || !window.AudioContext) return;
     const audio = new AudioContext();
@@ -200,6 +216,9 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
     host = me.id === m.host;
   const peerName = (id) =>
     members.find((x) => x.id === id)?.name || 'Team member';
+  const sourceFor = x => x.uid === me.id ? visual.source : x.sharing ? 'screen' : x.camera ? 'camera' : '';
+  const shares = active.filter(x => sourceFor(x) === 'screen');
+  const presenter = shares.find(x => x.uid === selectedShare) || shares[0];
   function pulse() {
     const next = () => alive.current && !leaving.current ? command('pulse', { ...facts.current }) : undefined;
     pulses.current = pulses.current.catch(() => {}).then(next);
@@ -291,16 +310,26 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
   useEffect(() => {
     if (ready) media.current?.sync(active);
   }, [rows, ready, now]);
-  async function captureMicrophone(deviceId, enabled) {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) },
-      video: false,
-    });
+  async function captureMicrophone(deviceId, enabled, suppressNoise = noise, changingNoise = false) {
+    const audio = { echoCancellation: true, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) };
+    if (supportsNoise) audio.noiseSuppression = { exact: suppressNoise };
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio, video: false }); }
+    catch (e) {
+      if (e.name !== 'OverconstrainedError' || e.constraint !== 'noiseSuppression') throw e;
+      if (changingNoise) throw Error('This microphone cannot use that noise cancellation setting.');
+      delete audio.noiseSuppression;
+      stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+    }
     const track = stream.getAudioTracks()[0];
     track.enabled = enabled;
     try {
       if (!alive.current) return;
-      await media.current.microphone(track);
+      try { await media.current.microphone(track); }
+      catch (e) {
+        if (alive.current) await media.current?.microphone(voice.current?.getAudioTracks()[0] || null);
+        throw e;
+      }
       if (!alive.current) return;
       voice.current?.getTracks().forEach(t => t.stop());
       voice.current = stream;
@@ -328,6 +357,27 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
     try { await command('end'); exit(); }
     catch (e) { leaving.current = false; throw e; }
   }
+  useEffect(() => {
+    if (!desktop || visual.source !== 'screen') return;
+    nativeAction('share_controls', { sharing: true, mic, busy: job.busy });
+  }, [visual.source, mic, job.busy]);
+  useEffect(() => {
+    if (!desktop || visual.source !== 'screen') return;
+    function receive(e) {
+      if (e.data?.kind !== 'share_control') return;
+      switch (e.data.action) {
+        case 'mic': if (!job.busy) job.run(toggleMic); break;
+        case 'stop': if (!job.busy) job.run(() => video.current.share()); break;
+        case 'settings': showSettings('mic'); break;
+        case 'end': setConfirmClose(host ? 'end' : 'leave'); break;
+      }
+    }
+    desktop.addEventListener('message', receive);
+    return () => desktop.removeEventListener('message', receive);
+  });
+  useEffect(() => {
+    if (visual.source === 'screen') return () => nativeAction('share_controls', { sharing: false });
+  }, [visual.source]);
   return createPortal(
     <div
       className="call-overlay"
@@ -346,7 +396,7 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
           <div className="call-settings-body">
           <h4>Camera &amp; background</h4>
           <div className="camera-preview" data-mirror={appearance.mirror || undefined}>
-            {visual.source === 'camera' ? <Media stream={visual.stream} video muted/> : <><Avatar person={me}/><small>{visual.source === 'screen' ? 'Sharing your screen' : 'Camera is off'}</small></>}
+            {visual.source === 'camera' ? <Media stream={visual.stream}/> : <><Avatar person={me}/><small>{visual.source === 'screen' ? 'Sharing your screen' : 'Camera is off'}</small></>}
           </div>
           <Label name="Camera">
             <select data-device="camera" value={cameraId} disabled={!ready || job.busy} onChange={e => {
@@ -385,6 +435,17 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
               {devices.filter(d => d.kind === 'audioinput').map((d, i) => <option value={d.deviceId} key={d.deviceId}>{d.label || 'Microphone ' + (i + 1)}</option>)}
             </select>
           </Label>
+          <Check checked={noise && supportsNoise} disabled={job.busy || !supportsNoise} onChange={e => {
+            const next = e.target.checked;
+            job.run(async () => {
+              setNoise(next);
+              try {
+                if (voice.current?.getAudioTracks()[0]?.readyState === 'live')
+                  await captureMicrophone(input, mic, next, true);
+                setMeetingSound(me.id, 'noise', next);
+              } catch (e) { setNoise(!next); throw e; }
+            });
+          }}>Noise cancellation</Check>
           <Label name={'Speaker volume · ' + Math.round(volume * 100) + '%'}>
             <input type="range" min="0" max="1" step=".01" value={volume}
               onChange={e => setVolume(Number(e.target.value))}/>
@@ -397,7 +458,7 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
           <ErrorText error={error || job.error} />
           </div>
         </section>}
-        <div className="meeting-stage">
+        <div className={"meeting-stage" + (presenter ? " presenting" : "")}>
         {!admitted ? (
           <div className="lobby">
             <Users size={40} />
@@ -407,18 +468,30 @@ export default function Call({ api, me, members, m, entry, exit, now }) {
         ) : (
           <>
             <div className="call-tiles" style={{
+              '--people': active.length || 1,
               '--cols': active.length > 4 ? 3 : 2, '--rows': Math.ceil(active.length / (active.length > 4 ? 3 : 2)),
               '--narrow-rows': Math.ceil(active.length / 2),
-            }} data-count={active.length} data-sharing={active.some(x => x.sharing) || undefined}>
+            }} data-count={active.length} data-sharing={!!presenter || undefined}>
               {active.map((x) => (
                 <Participant key={x.session} person={members.find(p => p.id === x.uid)}
-                  name={peerName(x.uid)} self={x.uid === me.id} mirror={appearance.mirror} context={context} volume={volume}
+                  name={peerName(x.uid)} self={x.uid === me.id} mirror={appearance.mirror} context={context}
                   stream={x.uid === me.id ? voice.current : remote[x.uid]}
                   visual={x.uid === me.id ? visual.stream : remote[x.uid]}
-                  source={x.uid === me.id ? visual.source : x.sharing ? 'screen' : x.camera ? 'camera' : ''}
+                  source={sourceFor(x) === 'screen' ? '' : sourceFor(x)}
                   muted={x.uid === me.id ? !mic : x.muted} state={states[x.uid]} />
               ))}
             </div>
+            {presenter && <section className="shared-content" aria-label="Shared screen">
+              <div className="share-sources">
+                {shares.length === 1 ? <span><MonitorUp size={14}/>{presenter.uid === me.id ? 'Your screen' : peerName(presenter.uid) + '’s screen'}</span> :
+                  shares.map(x => <button key={x.session} aria-pressed={presenter.uid === x.uid} onClick={() => selectShare(x.uid)}>
+                    <MonitorUp size={14}/>{x.uid === me.id ? 'Your screen' : peerName(x.uid) + '’s screen'}</button>)}
+              </div>
+              <div className="call-tile presentation-video" data-source="screen">
+                <Media stream={presenter.uid === me.id ? visual.stream : remote[presenter.uid]} />
+              </div>
+            </section>}
+            <RoomAudio remote={remote} volume={volume} />
           </>
         )}
         {host && rows.some(x => x.status === 'waiting' && x.seen > now - 90000) && (

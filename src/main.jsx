@@ -162,6 +162,7 @@ function SignIn({ onClose, connect }) {
 function App() {
   const [profileId, setProfileId] = useState('');
   const [meetingRequest, requestMeeting] = useState(null);
+  const [inMeeting, setInMeeting] = useState(false);
   const [eodDate,setEodDate]=useState(null);
   const [api, setApi] = useState(null),
     [space, setSpace] = useState({ members: [], boards: [] }),
@@ -328,8 +329,9 @@ function App() {
         presence.current = v;
       },
       tell,
+      inMeeting,
     );
-  }, [api, prefs.presence]);
+  }, [api, prefs.presence, inMeeting]);
   useEffect(
     () =>
       !detached && api ? api.watchAlerts((e) => {
@@ -630,6 +632,7 @@ function App() {
             {...shared}
             prefs={prefs}
             hub={view === 'meetings'}
+            onAttendance={setInMeeting}
             visible={view === 'calendar' || view === 'meetings'}
             request={meetingRequest}
             reminders={!detached}

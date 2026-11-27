@@ -123,6 +123,9 @@ internal class WorkspaceWindow : Form {
         var content=new WebView2 { Dock=DockStyle.Fill };
         child.Controls.Add(content);
         bool activeCall=false,allowClose=false;
+        PresenterControls controls=null;
+        Action dismissControls=()=>{if(controls!=null){controls.Dispose();controls=null;}};
+        child.FormClosed+=(s,e)=>dismissControls();
         child.FormClosing+=(s,e)=>{
             if(!isCall || allowClose || e.CloseReason!=CloseReason.UserClosing)return;
             if(activeCall && content.CoreWebView2!=null) {
@@ -141,7 +144,7 @@ internal class WorkspaceWindow : Form {
             ConfigureView(core);
             Action reportPin=()=>core.PostWebMessageAsJson(child.TopMost ?
                 "{\"kind\":\"pin_state\",\"pinned\":true}" : "{\"kind\":\"pin_state\",\"pinned\":false}");
-            core.ProcessFailed+=(s,e)=>{if(e.ProcessFailedKind==CoreWebView2ProcessFailedKind.RenderProcessExited)activeCall=false;};
+            core.ProcessFailed+=(s,e)=>{if(e.ProcessFailedKind==CoreWebView2ProcessFailedKind.RenderProcessExited){activeCall=false;dismissControls();}};
             core.WebMessageReceived+=(s,e)=>{
                 if(!Local(e.Source))return;
                 try {
@@ -151,7 +154,20 @@ internal class WorkspaceWindow : Form {
                         case "open_window":OpenWorkspaceWindow(env,Convert.ToString(message["url"]),Convert.ToString(message["title"]));break;
                         case "toggle_pin":child.TopMost=!child.TopMost;reportPin();break;
                         case "get_pin":reportPin();break;
-                        case "call_active":activeCall=isCall && Convert.ToBoolean(message["active"]);break;
+                        case "call_active":activeCall=isCall && Convert.ToBoolean(message["active"]);if(!activeCall)dismissControls();break;
+                        case "share_controls":
+                            if(!activeCall || !Convert.ToBoolean(message["sharing"])){dismissControls();break;}
+                            if(controls==null) {
+                                controls=new PresenterControls(child,action=>{
+                                    if(action=="meeting" || action=="settings" || action=="end"){
+                                        if(child.WindowState==FormWindowState.Minimized)child.WindowState=FormWindowState.Normal;
+                                        child.Activate();
+                                    }
+                                    core.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new {kind="share_control",action}));
+                                });
+                                controls.Show();
+                            }
+                            controls.UpdateAudio(Convert.ToBoolean(message["mic"]),Convert.ToBoolean(message["busy"]));break;
                         case "close_window":allowClose=true;child.Close();break;
                     }
                 } catch(Exception) { if(!child.IsDisposed)core.PostWebMessageAsString("Windows could not complete the window action."); }
@@ -169,6 +185,9 @@ internal class WorkspaceWindow : Form {
             var env=await CoreWebView2Environment.CreateAsync(null,profile,null);
             await view.EnsureCoreWebView2Async(env);var core=view.CoreWebView2;
             ConfigureView(core);
+            try { await core.Profile.SetPermissionStateAsync(CoreWebView2PermissionKind.Autoplay,Origin,CoreWebView2PermissionState.Allow); }
+            catch (NotImplementedException) { /* Older runtimes use the shared audio button. */ }
+            catch (COMException) { /* Device policy can manage playback permissions. */ }
             var meetingAlarm = new System.Windows.Forms.Timer();
             meetingAlarm.Tick += (s,e) => {meetingAlarm.Stop();core.PostWebMessageAsJson("{\"kind\":\"meeting_clock\"}");};
             FormClosed += (s,e) => meetingAlarm.Dispose();
@@ -205,7 +224,8 @@ internal class WorkspaceWindow : Form {
                             }
                         }
                         else {
-                            if(banner)core.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new {kind="workspace_banner",title,body}));
+                            if(banner && !(msg.ContainsKey("foregroundHandled") && Convert.ToBoolean(msg["foregroundHandled"])))
+                                core.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new {kind="workspace_banner",title,body}));
                             if(sound)System.Media.SystemSounds.Asterisk.Play();
                             core.PostWebMessageAsJson("{\"kind\":\"notification_delivery\",\"method\":\"in-app\",\"accepted\":true}");
                         }
